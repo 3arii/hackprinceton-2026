@@ -1,0 +1,11 @@
+menu "Flotsam USB gateway"
+config FLOTSAM_GATEWAY_SSID
+    string "Gateway Wi-Fi SSID"
+    default "Flotsam-Gateway"
+config FLOTSAM_GATEWAY_PASSWORD
+    string "Gateway WPA2 password"
+    default ""
+config FLOTSAM_GATEWAY_TOKEN
+    string "Image upload bearer token"
+    default ""
+endmenu
