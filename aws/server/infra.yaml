@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Lake Steward host - Agent Server (deep agent), Postgres, Redis, dashboard and Caddy on one small EC2 instance.
+
+Parameters:
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+  InstanceType:
+    Type: String
+    Default: t4g.small
+  Bucket:
+    Type: String
+    Description: buoy-monitor bucket; holds server/docker-compose.yml and server/Caddyfile
+  Table:
+    Type: String
+  AlertTopic:
+    Type: String
+  ApiUrl:
+    Type: String
+    Description: buoy-monitor dashboard API (Lambda function URL)
+
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      Policies:
+        - PolicyName: lake-steward
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/buoy/*
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"
+                Condition:
+                  StringEquals: { kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com" }
+              - Effect: Allow
+                Action: [dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem]
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${Bucket}/server/*
+
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref Role]
+
+  WebGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTP and HTTPS for the dashboard (Caddy); no SSH, maintenance goes through SSM
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
+
+  Address:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  Host:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref Profile
+      SecurityGroupIds: [!GetAtt WebGroup.GroupId]
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 2 # containers reach the instance role through IMDS
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeSize: 20, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: lake-steward }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > /var/log/lake-steward-boot.log 2>&1
+
+          # Docker + compose, and swap so a 2 GB box never OOMs during a burst of subagents
+          dnf install -y docker
+          systemctl enable --now docker
+          mkdir -p /usr/local/lib/docker/cli-plugins
+          curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-aarch64" -o /usr/local/lib/docker/cli-plugins/docker-compose
+          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+          fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+          mkdir -p /opt/lake && cd /opt/lake
+          aws s3 cp s3://${Bucket}/server/docker-compose.yml .
+          aws s3 cp s3://${Bucket}/server/Caddyfile .
+
+          param() { aws ssm get-parameter --region ${AWS::Region} --name "$1" --with-decryption --query Parameter.Value --output text; }
+          REGISTRY=${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          umask 077
+          cat > .env <<ENV
+          SITE_ADDRESS=$(echo ${Address} | tr . -).sslip.io
+          STEWARD_IMAGE=$REGISTRY/lake-steward:latest
+          WEB_IMAGE=$REGISTRY/lake-dashboard:latest
+          AWS_REGION=${AWS::Region}
+          BUOY_TABLE=${Table}
+          BUOY_BUCKET=${Bucket}
+          ALERT_TOPIC=${AlertTopic}
+          BUOY_API_URL=${ApiUrl}
+          CASE_LIMIT=40
+          ANTHROPIC_API_KEY=$(param /buoy/anthropic-api-key)
+          LANGSMITH_API_KEY=$(param /buoy/langsmith-api-key)
+          STEWARD_KEY=$(param /buoy/steward-key)
+          BUOY_DEBUG_TOKEN=$(param /buoy/debug-token)
+          DEBUG_PASSCODE=$(param /buoy/debug-passcode)
+          ALERT_PHONE=$(param /buoy/alert-phone)
+          PHOTON_WEBHOOK_SECRET=$(param /buoy/photon-webhook-secret)
+          ENV
+          sed -i 's/^ *//' .env
+
+          aws ecr get-login-password --region ${AWS::Region} | docker login --username AWS --password-stdin $REGISTRY
+          docker compose --env-file .env pull
+          docker compose --env-file .env up -d
+          echo done
+
+  Attach:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt Address.AllocationId
+      InstanceId: !Ref Host
+
+Outputs:
+  Url:
+    Value: !Sub
+      - https://${Dashed}.sslip.io
+      - Dashed: !Join ["-", !Split [".", !Ref Address]]
+  InstanceId:
+    Value: !Ref Host
+  PublicIp:
+    Value: !Ref Address
