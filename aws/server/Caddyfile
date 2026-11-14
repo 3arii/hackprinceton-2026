@@ -1,0 +1,17 @@
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# The Agent Server has no auth of its own: only callers with the key get through
+	# (the Lambda dispatcher and maintenance scripts). The dashboard reaches it internally.
+	handle_path /steward/* {
+		@key header X-Api-Key {$STEWARD_KEY}
+		handle @key {
+			reverse_proxy steward:8000
+		}
+		respond "unauthorized" 401
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

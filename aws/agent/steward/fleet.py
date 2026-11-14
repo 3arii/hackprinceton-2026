@@ -1,0 +1,80 @@
+"""Buoy readings and past incidents, from the pipeline's DynamoDB table."""
+
+import asyncio
+from datetime import datetime, timedelta
+from decimal import Decimal
+
+from boto3.dynamodb.conditions import Key
+import boto3
+
+from steward.config import BUOYS, REGION, TABLE
+
+METRICS = ("temperature", "microplastics", "salinity", "turbidity")
+_table = None
+
+
+def table():
+    global _table
+    if _table is None:
+        _table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE)
+    return _table
+
+
+def plain(obj):
+    if isinstance(obj, list):
+        return [plain(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: plain(v) for k, v in obj.items()}
+    if isinstance(obj, Decimal):
+        return int(obj) if obj == obj.to_integral_value() else float(obj)
+    return obj
+
+
+def _readings(buoy: int, since: str, until: str) -> list[dict]:
+    res = table().query(KeyConditionExpression=Key("pk").eq(f"BUOY#{buoy}") & Key("sk").between(f"R#{since}", f"R#{until}"))
+    return [plain(i) for i in res["Items"]]
+
+
+async def network(at: str, hours_before: float = 6, run: str | None = None) -> dict:
+    """Every buoy's readings in a window ending one hour after `at`: latest values, range and trend."""
+    when = datetime.fromisoformat(at)
+    since = (when - timedelta(hours=hours_before)).isoformat(timespec="seconds")
+    until = (when + timedelta(hours=1)).isoformat(timespec="seconds")
+    rows = await asyncio.gather(*(asyncio.to_thread(_readings, b, since, until) for b in BUOYS))
+    out = {}
+    for b, rs in zip(BUOYS, rows):
+        # Live readings, plus this demo run's own readings
+        rs = [r for r in rs if r.get("run") in (None, run)]
+        if not rs:
+            out[f"buoy_{b}"] = "no readings in window"
+            continue
+        mine = [r for r in rs if run and r.get("run") == run]
+        latest = (mine or rs)[-1]
+        out[f"buoy_{b}"] = {
+            "latest": {m: latest[m] for m in METRICS},
+            "latest_time": latest["time"],
+            "range": {m: [min(r[m] for r in rs), max(r[m] for r in rs)] for m in METRICS},
+            "first_in_window": {m: rs[0][m] for m in METRICS},
+            "readings": len(rs),
+        }
+    return out
+
+
+def _incidents(limit: int) -> list[dict]:
+    res = table().query(KeyConditionExpression=Key("pk").eq("INCIDENT"), ScanIndexForward=False, Limit=limit)
+    return [plain(i) for i in res["Items"]]
+
+
+async def incidents(limit: int = 25) -> list[dict]:
+    keep = ("detected_at", "buoy", "metric", "value", "verdict", "cause", "confidence", "summary", "run")
+    return [{k: i.get(k) for k in keep} for i in await asyncio.to_thread(_incidents, limit)]
+
+
+def _put(item: dict) -> None:
+    table().put_item(Item=item)
+
+
+async def save(item: dict) -> None:
+    import json
+
+    await asyncio.to_thread(_put, json.loads(json.dumps(item, default=str), parse_float=Decimal))

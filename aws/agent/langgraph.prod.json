@@ -1,0 +1,15 @@
+{
+  "python_version": "3.12",
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "steward": "./steward/graphs.py:steward",
+    "hydrology": "./steward/graphs.py:hydrology",
+    "satellite": "./steward/graphs.py:satellite",
+    "permits": "./steward/graphs.py:permits",
+    "history": "./steward/graphs.py:history",
+    "community": "./steward/graphs.py:community",
+    "liaison": "./steward/graphs.py:liaison"
+  }
+}

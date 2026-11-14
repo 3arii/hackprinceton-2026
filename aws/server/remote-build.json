@@ -1,0 +1,20 @@
+{"executionTimeout":["3000"],"commands":[
+"set -e",
+"cd /opt/lake",
+"REG=$(grep '^STEWARD_IMAGE=' .env | cut -d= -f2 | cut -d/ -f1)",
+"BUCKET=$(grep '^BUOY_BUCKET=' .env | cut -d= -f2)",
+"rm -rf src && mkdir -p src/agent src/web",
+"aws s3 cp s3://$BUCKET/server/src/agent.tgz - | tar xz -C src/agent",
+"aws s3 cp s3://$BUCKET/server/src/web.tgz - | tar xz -C src/web",
+"docker build -q -f src/agent/Dockerfile.agent -t $REG/lake-steward:latest src/agent",
+"docker build -q -t $REG/lake-dashboard:latest src/web",
+"p() { aws ssm get-parameter --region us-east-2 --name \"$1\" --with-decryption --query Parameter.Value --output text; }",
+"sed -i '/^ALERT_PHONE=/d;/^PHOTON_WEBHOOK_SECRET=/d' .env",
+"echo ALERT_PHONE=$(p /buoy/alert-phone) >> .env",
+"echo PHOTON_WEBHOOK_SECRET=$(p /buoy/photon-webhook-secret) >> .env",
+"docker compose up -d --force-recreate steward web",
+"docker image prune -f >/dev/null; docker builder prune -f >/dev/null",
+"sleep 25",
+"docker compose ps --format '{{.Name}} {{.Status}}'",
+"df -h / | tail -1"
+]}

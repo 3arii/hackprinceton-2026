@@ -1,0 +1,56 @@
+# One host runs the whole app: the Lake Steward Agent Server (with its Postgres and Redis),
+# the dashboard, and Caddy for HTTPS. Secrets come from .env, written at boot from SSM.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  steward:
+    image: ${STEWARD_IMAGE:-lake-steward:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    env_file: .env
+    environment:
+      DATABASE_URI: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      REDIS_URI: redis://redis:6379
+      N_JOBS_PER_WORKER: "10"
+      LANGSMITH_TRACING: "true"
+      LANGSMITH_PROJECT: lake-steward
+
+  web:
+    image: ${WEB_IMAGE:-lake-dashboard:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      STEWARD_URL: http://steward:8000
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on: [web, steward]
+
+volumes:
+  pgdata:
+  caddy:
