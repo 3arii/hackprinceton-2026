@@ -50,13 +50,29 @@ async def network(at: str, hours_before: float = 6, run: str | None = None) -> d
             continue
         mine = [r for r in rs if run and r.get("run") == run]
         latest = (mine or rs)[-1]
+        # A hardware buoy reports None for sensors that failed or aren't wired yet
+        vals = {m: [r[m] for r in rs if r.get(m) is not None] for m in METRICS}
         out[f"buoy_{b}"] = {
-            "latest": {m: latest[m] for m in METRICS},
+            "latest": {m: latest.get(m) for m in METRICS},
             "latest_time": latest["time"],
-            "range": {m: [min(r[m] for r in rs), max(r[m] for r in rs)] for m in METRICS},
-            "first_in_window": {m: rs[0][m] for m in METRICS},
+            "range": {m: [min(v), max(v)] if v else None for m, v in vals.items()},
+            "first_in_window": {m: v[0] if v else None for m, v in vals.items()},
             "readings": len(rs),
         }
+        if latest.get("source") == "hardware":
+            out[f"buoy_{b}"]["hardware"] = {
+                "node": latest.get("node"),
+                "mesh_level": latest.get("level"),  # 1 talks to the gateway, 2 is relayed through another buoy
+                "rssi": latest.get("rssi"),
+                "temp_samples_last_minute": latest.get("temp_samples"),
+                # How microplastics was estimated: particles caught on the mesh, litres filtered, 95% interval
+                "camera": latest.get("camera"),
+                "note": (
+                    "temperature is a sensor; microplastics is estimated from the mesh camera (particles caught "
+                    "over water filtered; camera.measured false means the flow rate is a guess, so treat it as "
+                    "rough), and is null while the camera is off or blocked; salinity and turbidity aren't connected yet"
+                ),
+            }
     return out
 
 

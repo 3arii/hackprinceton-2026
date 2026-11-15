@@ -4,6 +4,7 @@ The profiles mirror frontend/src/lib/buoyData.ts so the dashboard and the backen
 """
 
 import math
+import statistics
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -87,7 +88,8 @@ SCENARIOS = {
 
 
 def check(r, base):
-    """Return the metrics of reading `r` that are extreme against the USGS baseline `base`."""
+    """Return the metrics of reading `r` that are extreme against the USGS baseline `base`.
+    A metric that is missing or None (a failed or unwired sensor) is never flagged."""
     usgs = base.get("usgs", {})
     val = lambda k: (usgs.get(k) or {}).get("value")  # noqa: E731
     river_t, river_sc, river_turb = val("water_temp_c"), val("specific_conductance_us_cm"), val("turbidity_fnu")
@@ -97,20 +99,71 @@ def check(r, base):
     def flag(metric, ref, why):
         out.append({"metric": metric, "value": r[metric], "unit": UNITS[metric], "baseline": ref, "reason": why})
 
-    t = r["temperature"]
-    if t > 30:
+    t = r.get("temperature")
+    if t is None:
+        pass
+    elif t > 30:
         flag("temperature", river_t, f"{t} °C is above the 30 °C stress limit for fish")
     elif river_t is not None and t - river_t > 4:
         flag("temperature", river_t, f"{t} °C is {t - river_t:.1f} °C warmer than the Millstone River ({river_t} °C)")
 
-    s = r["salinity"]
-    if s > max(0.5, 2.5 * (river_psu or 0)):
+    s = r.get("salinity")
+    if s is not None and s > max(0.5, 2.5 * (river_psu or 0)):
         flag("salinity", river_psu, f"{s} PSU vs about {river_psu} PSU in the river")
 
-    tb = r["turbidity"]
-    if tb > max(40, 3 * (river_turb or 0)):
+    tb = r.get("turbidity")
+    if tb is not None and tb > max(40, 3 * (river_turb or 0)):
         flag("turbidity", river_turb, f"{tb} NTU vs {river_turb} FNU in the river")
 
-    if r["microplastics"] > 12:
-        flag("microplastics", None, f"{r['microplastics']} particles/L, above the 12 particles/L alert level")
+    mp = r.get("microplastics")
+    if mp is not None and mp > 12:
+        flag("microplastics", None, f"{mp} particles/L, above the 12 particles/L alert level")
     return out
+
+
+# --- Hardware buoys -------------------------------------------------------------------------
+# The Pi gateway uploads each node's samples (one every 5 s) as a JSON-lines file per minute.
+# Only temp_c is wired. light_mv - ambient_mv (turbidity) and cond_mv (conductivity) are noise
+# until the LED and electrodes are connected, so they are kept for reference and never checked.
+
+TEMP_RANGE = (-2.0, 45.0)  # outside this it's a bad read, not water (a DS18B20 reports 85 °C on a failed conversion)
+CAMERA_FRESH = 600  # seconds; an older camera estimate leaves microplastics None (camera off, blocked or moved)
+
+
+def _median(values):
+    vals = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return round(statistics.median(vals), 2) if vals else None
+
+
+def from_samples(buoy, node, samples, camera=None):
+    """One reading from a node's minute of samples. Medians, so one glitchy sample can't raise an alert;
+    a failed sensor sends null and leaves its metric None. Microplastics come from the mesh camera's
+    estimate (camera.py) while it is current."""
+    samples = sorted(samples, key=lambda s: s.get("received_at") or 0)
+    last = samples[-1]
+    temps = [t for s in samples if isinstance(t := s.get("temp_c"), (int, float)) and TEMP_RANGE[0] <= t <= TEMP_RANGE[1]]
+    when = datetime.fromtimestamp(last["received_at"], timezone.utc) if last.get("received_at") else datetime.now(timezone.utc)
+    if camera and abs((when - datetime.fromisoformat(camera["until"])).total_seconds()) > CAMERA_FRESH:
+        camera = None
+    return {
+        "buoy": buoy,
+        "time": when.isoformat(timespec="seconds"),
+        "temperature": _median(temps),
+        "microplastics": camera["per_liter"] if camera else None,
+        "salinity": None,
+        "turbidity": None,
+        "source": "hardware",
+        "camera": camera,  # how microplastics was estimated: particles caught, litres, interval, assumptions
+        "node": node,
+        "samples": len(samples),
+        "temp_samples": len(temps),
+        "level": last.get("level"),  # mesh hop: 1 talks to the gateway, 2 is relayed through another buoy
+        "rssi": _median(s.get("rssi") for s in samples),
+        "unwired": {
+            "light_minus_ambient_mv": _median(
+                s["light_mv"] - s["ambient_mv"] for s in samples
+                if isinstance(s.get("light_mv"), (int, float)) and isinstance(s.get("ambient_mv"), (int, float))
+            ),
+            "cond_mv": _median(s.get("cond_mv") for s in samples),
+        },
+    }

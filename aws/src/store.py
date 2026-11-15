@@ -3,8 +3,11 @@
 pk               sk                         item
 BASELINE         latest                     newest gauge + weather snapshot
 BUOY#<n>         R#<iso time>               one buoy reading (expires after 7 days)
+CAMERA#<node>    estimate                   microplastics per litre from the camera's newest run of photos
 INCIDENT         <iso time>#<buoy>#<metric> an investigated anomaly and its verdict
 LOCK#<n>#<m>     lock                       cooldown so one anomaly isn't investigated twice
+PHOTO#<node>     <iso time>#<file>          a camera photo's label from its clean-mesh model (expires after 7 days)
+SAMPLE#<node>    <seq>#<uptime ms>          a hardware sample already ingested (expires after 2 days)
 """
 
 import json
@@ -77,6 +80,48 @@ def claim_lock(buoy, metric, seconds):
         return True
     except TABLE.meta.client.exceptions.ConditionalCheckFailedException:
         return False
+
+
+def claim_sample(node, seq, uptime_ms=None):
+    """True the first time this sample is seen. A failed batch can be re-sent; seq restarts at boot,
+    so uptime_ms keeps a reboot's samples from colliding with the last boot's."""
+    try:
+        TABLE.put_item(
+            Item={"pk": f"SAMPLE#{node}", "sk": f"{seq}#{uptime_ms}", "expires": int(time.time()) + 2 * 24 * 3600},
+            ConditionExpression="attribute_not_exists(pk)",
+        )
+        return True
+    except TABLE.meta.client.exceptions.ConditionalCheckFailedException:
+        return False
+
+
+def save_photo(p):
+    sk = f"{p['time']}#{p['key'].rsplit('/', 1)[-1]}"
+    TABLE.put_item(Item=to_ddb({"pk": f"PHOTO#{p['node']}", "sk": sk, "expires": int(time.time()) + WEEK, **p}))
+
+
+def photos(node, limit=200):
+    res = TABLE.query(KeyConditionExpression=Key("pk").eq(f"PHOTO#{node}"), ScanIndexForward=False, Limit=limit)
+    return [from_ddb(i) for i in res["Items"]]
+
+
+def photos_since(node, since_iso):
+    query = {"KeyConditionExpression": Key("pk").eq(f"PHOTO#{node}") & Key("sk").gte(since_iso)}
+    items = []
+    while True:
+        res = TABLE.query(**query)
+        items += res["Items"]
+        if "LastEvaluatedKey" not in res:
+            return [from_ddb(i) for i in items]
+        query["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+
+
+def save_estimate(node, est):
+    TABLE.put_item(Item=to_ddb({"pk": f"CAMERA#{node}", "sk": "estimate", "node": node, **est}))
+
+
+def camera_estimate(node):
+    return from_ddb(TABLE.get_item(Key={"pk": f"CAMERA#{node}", "sk": "estimate"}).get("Item") or {}) or None
 
 
 def save_incident(inc):

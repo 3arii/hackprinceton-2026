@@ -7,8 +7,9 @@
     permits     EPA discharge-permit specialist
     community   Bluesky community-signals specialist (content + connectivity)
     history     buoy-network and past-incident specialist
+    liaison     answers the manager's iMessages, and launches the same specialists for live checks
 
-All five are deep agents on the same Agent Server, so the specialists run on their own
+All of them are deep agents on the same Agent Server, so the specialists run on their own
 threads concurrently and wake the steward when they finish (ASGI transport, no URLs).
 """
 
@@ -155,21 +156,37 @@ steward = create_deep_agent(
 
 # --- Liaison: answers the lake manager's iMessages ---------------------------------------
 
-LIAISON_PROMPT = """You are the Lake Steward's voice on iMessage. The person texting you manages Lake Carnegie in Princeton, NJ; you alert them when the steward's investigations find a problem, and they text you to ask about it.
+LIAISON_PROMPT = """You are the Lake Steward's voice on iMessage. The person texting you manages Lake Carnegie in Princeton, NJ; you alert them when the steward's investigations find a problem, and they text you to ask about it or to have something checked.
+
+## Answering from what is known
 - For "why", "what happened", "details" or similar: use recent_cases, then case_evidence for the specialists that matter, and explain the evidence behind the latest verdict in plain words with the key numbers.
 - For "how's the lake" or "status": use lake_now.
 - For anything else, answer briefly from what you know about the lake (your memory below) or say what you can do.
-Always finish by calling reply exactly once with your answer: under 100 words, plain text, no markdown, friendly and direct. Never invent readings."""
+
+## Live checks
+When they ask you to check something now, launch the specialist that covers it with start_async_task; it runs in the background on its own thread:
+- social media, what people are saying, any reports or complaints: community
+- the river, rain, weather, storms: hydrology
+- satellite, what the lake looks like, algae, sediment, plumes: satellite
+- who might be discharging, permits, polluters: permits
+- the buoys over time, a sensor fault, past incidents: history
+Always run a fresh check when asked, even if you checked earlier in this conversation: things change. Always run a fresh check when asked, even if you checked earlier in this conversation: things change. Launch at most two per text. Give each a self-contained task: what the manager asked, the latest case if it is relevant (recent_cases), and what to look for. "Now" is the time of the text.
+Then call reply with a one-line heads-up (for example "Checking Bluesky now, I'll text you in a couple of minutes.") and stop. Do not poll with check_async_task.
+You are woken when a specialist finishes. If another one you launched is still running (list_async_tasks), stop without replying. Once all are done, read their files in /case/evidence/ with read_file and reply with what they found.
+
+## Replies
+Every turn ends with exactly one reply: under 100 words, plain text, no markdown, friendly and direct. Lead with the answer ("All quiet on Bluesky: ..."). Never invent readings or posts."""
 
 
 liaison = create_deep_agent(
     model=worker_model(),
     tools=[tools.recent_cases, tools.case_evidence, tools.lake_now, tools.reply],
     system_prompt=LIAISON_PROMPT,
+    subagents=SPECIALISTS,
     memory=["/memories/AGENTS.md"],
     backend=backend(),
     permissions=[READ_ONLY_SKILLS, READ_ONLY_MEMORY],
     context_schema=Chat,
-    middleware=[ModelCallLimitMiddleware(run_limit=6, exit_behavior="end")],
+    middleware=[ModelCallLimitMiddleware(run_limit=8, exit_behavior="end")],
     name="liaison",
 )

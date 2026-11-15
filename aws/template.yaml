@@ -27,6 +27,15 @@ Parameters:
     Type: String
     Default: "false"
     AllowedValues: ["true", "false"]
+  NodeBuoys:
+    Type: String
+    Default: "{}"
+    Description: 'Hardware mesh node id to buoy number, as JSON, e.g. {"2884855a1da8": 1}'
+  HardwareAlerts:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Open investigations for hardware buoys' anomalies (off while they are on the bench)
 
 Globals:
   Function:
@@ -40,6 +49,7 @@ Globals:
       Variables:
         TABLE: !Ref Table
         BUCKET: !Ref Bucket
+        NODE_BUOYS: !Ref NodeBuoys
 
 Resources:
   Logs:
@@ -75,6 +85,9 @@ Resources:
       LifecycleConfiguration:
         Rules:
           - { Id: expire-raw, Status: Enabled, Prefix: raw/, ExpirationInDays: 90 }
+      # Uploads from the buoys' Pi gateway reach Lambda through EventBridge
+      NotificationConfiguration:
+        EventBridgeConfiguration: { EventBridgeEnabled: true }
 
   AlertTopic:
     Type: AWS::SNS::Topic
@@ -144,6 +157,64 @@ Resources:
           Properties:
             AwsIotSqlVersion: "2016-03-23"
             Sql: "SELECT * FROM 'buoys/+/readings'"
+
+  # Hardware buoys: the Pi gateway uploads each node's minute of samples to readings/
+  UploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.on_upload
+      Environment:
+        Variables:
+          LOCK_SECONDS: "3600"
+          HARDWARE_ALERTS: !Ref HardwareAlerts
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - S3ReadPolicy: { BucketName: !Ref Bucket }
+        - EventBridgePutEventsPolicy: { EventBusName: default }
+      Events:
+        Uploaded:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [aws.s3]
+              detail-type: [Object Created]
+              detail:
+                bucket: { name: [!Ref Bucket] }
+                object: { key: [{ prefix: readings/ }] }
+            RetryPolicy: { MaximumRetryAttempts: 2 }
+
+  # Labels every buoy camera photo with that camera's clean-mesh model (vision/; models in the bucket)
+  VisionLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      Description: numpy, OpenCV and the microplastics package, built by deploy.sh
+      ContentUri: .build/vision/
+      CompatibleRuntimes: [python3.13]
+      CompatibleArchitectures: [arm64]
+
+  PhotoFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: camera.on_photo
+      Layers: [!Ref VisionLayer]
+      MemorySize: 1024
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - S3ReadPolicy: { BucketName: !Ref Bucket }
+      Events:
+        Uploaded:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source: [aws.s3]
+              detail-type: [Object Created]
+              detail:
+                bucket: { name: [!Ref Bucket] }
+                object: { key: [{ prefix: images/ }] }
+            RetryPolicy: { MaximumRetryAttempts: 2 }
 
   # The agent: gathers evidence, decides, alerts
   AgentFunction:
