@@ -79,6 +79,39 @@ config FLOTSAM_UPLOAD_TOKEN
         and built firmware private. HTTP is for the WPA2 local network;
         HTTPS verifies the receiver using the ESP certificate bundle.
 
+config FLOTSAM_READINGS_URL
+    string "Sensor readings URL"
+    default "http://192.168.4.1/readings"
+    help
+        POST one JSON reading (application/json) per interval to the shore gateway,
+        which forwards it over USB to the Pi as a FLOTSAM_READING line.
+
+config FLOTSAM_READING_INTERVAL_MS
+    int "Milliseconds between sensor readings"
+    range 2000 600000
+    default 5000
+
+config FLOTSAM_SAMPLE_MS
+    int "Sample line on-time per reading (pump + turbidity LED + excitation), ms"
+    range 800 10000
+    default 1500
+
+config FLOTSAM_TEMP_GPIO
+    int "DS18B20 data GPIO (needs 4.7k pull-up; the adapter board has one)"
+    default 0
+
+config FLOTSAM_LIGHT_GPIO
+    int "TEMT6000 signal GPIO (ADC1)"
+    default 1
+
+config FLOTSAM_COND_GPIO
+    int "Conductivity divider GPIO (ADC)"
+    default 14
+
+config FLOTSAM_SAMPLE_GPIO
+    int "Sample line GPIO (pump + turbidity LED + conductivity excitation)"
+    default 47
+
 endif
 
 endmenu

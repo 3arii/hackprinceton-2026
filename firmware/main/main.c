@@ -23,6 +23,7 @@
 
 #include "camera.h"
 #include "capture_policy.h"
+#include "sensors.h"
 
 static const char *TAG = "flotsam";
 static EventGroupHandle_t network_events;
@@ -161,20 +162,65 @@ static bool upload_image(const camera_fb_t *frame, const char *node_id,
     return false;
 }
 
+// Sensor stream: one JSON reading every CONFIG_FLOTSAM_READING_INTERVAL_MS to the shore gateway,
+// which forwards it to the Pi over USB. Independent of the camera so a camera fault never stops readings.
+static void readings_task(void *arg)
+{
+    const char *node_id = arg;
+    char authorization[sizeof(CONFIG_FLOTSAM_UPLOAD_TOKEN) + 8];
+    snprintf(authorization, sizeof(authorization), "Bearer %s", CONFIG_FLOTSAM_UPLOAD_TOKEN);
+    uint32_t seq = 0;
+    TickType_t last = xTaskGetTickCount();
+    for (;;) {
+        flotsam_reading_t reading;
+        flotsam_sensors_read(&reading, CONFIG_FLOTSAM_SAMPLE_MS);
+        wifi_ap_record_t ap;
+        int rssi = esp_wifi_sta_get_ap_info(&ap) == ESP_OK ? ap.rssi : 0;
+        char body[256];
+        size_t len = flotsam_reading_json(&reading, node_id, ++seq, esp_timer_get_time() / 1000, rssi,
+                                          (unsigned)esp_mesh_lite_get_level(), body, sizeof(body));
+        ESP_LOGI(TAG, "reading %s", body);
+        if (len && (xEventGroupGetBits(network_events) & CONNECTED_BIT)) {
+            for (int attempt = 0; attempt < 2; ++attempt) {
+                const esp_http_client_config_t config = {
+                    .url = CONFIG_FLOTSAM_READINGS_URL, .method = HTTP_METHOD_POST,
+                    .timeout_ms = 15000, .disable_auto_redirect = true,
+                };
+                esp_http_client_handle_t client = esp_http_client_init(&config);
+                if (client == NULL) break;
+                esp_err_t err = esp_http_client_set_header(client, "Content-Type", "application/json");
+                if (err == ESP_OK) err = esp_http_client_set_header(client, "Authorization", authorization);
+                if (err == ESP_OK) err = esp_http_client_set_header(client, "X-Node-ID", node_id);
+                if (err == ESP_OK) err = esp_http_client_set_post_field(client, body, len);
+                if (err == ESP_OK) err = esp_http_client_perform(client);
+                int status = esp_http_client_get_status_code(client);
+                esp_http_client_cleanup(client);
+                if (err == ESP_OK && upload_acknowledged(status)) break;
+                ESP_LOGW(TAG, "Reading %" PRIu32 " not delivered: %s, HTTP %d", seq, esp_err_to_name(err), status);
+                vTaskDelay(pdMS_TO_TICKS(400));
+            }
+        }
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(CONFIG_FLOTSAM_READING_INTERVAL_MS));
+    }
+}
+
 void app_main(void)
 {
     if (!configuration_valid()) return;
     start_mesh();
-    esp_err_t err = flotsam_camera_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Camera init failed: %s; mesh relay stays active", esp_err_to_name(err));
-        return;
-    }
-
     uint8_t mac[6];
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
-    char node_id[13], boot_id[17];
+    static char node_id[13];
+    char boot_id[17];
     snprintf(node_id, sizeof(node_id), "%02x%02x%02x%02x%02x%02x", MAC2STR(mac));
+    ESP_ERROR_CHECK(flotsam_sensors_init());
+    xTaskCreate(readings_task, "readings", 6144, node_id, 4, NULL);
+
+    esp_err_t err = flotsam_camera_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Camera init failed: %s; sensor readings and mesh relay stay active", esp_err_to_name(err));
+        return;
+    }
     snprintf(boot_id, sizeof(boot_id), "%08" PRIx32 "%08" PRIx32, esp_random(), esp_random());
     uint64_t sequence = 0;
     ESP_LOGI(TAG, "Camera %s, slot %d, 640x480 JPEG every 30s; external illumination required",
