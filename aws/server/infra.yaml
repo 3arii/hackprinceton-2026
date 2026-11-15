@@ -54,6 +54,17 @@ Resources:
               - Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:aws:s3:::${Bucket}/server/*
+              # The dashboard reads the hardware buoys' photos and readings the Pi gateway uploads
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  - !Sub arn:aws:s3:::${Bucket}/images/*
+                  - !Sub arn:aws:s3:::${Bucket}/readings/*
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${Bucket}
+                Condition:
+                  StringLike: { "s3:prefix": ["images/*", "readings/*"] }
 
   Profile:
     Type: AWS::IAM::InstanceProfile
@@ -117,6 +128,7 @@ Resources:
           AWS_REGION=${AWS::Region}
           BUOY_TABLE=${Table}
           BUOY_BUCKET=${Bucket}
+          IMAGES_BUCKET=${Bucket}
           ALERT_TOPIC=${AlertTopic}
           BUOY_API_URL=${ApiUrl}
           CASE_LIMIT=40

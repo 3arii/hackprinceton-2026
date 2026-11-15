@@ -19,6 +19,14 @@ export const METRICS: Metric[] = [
   { key: "turbidity", label: "Turbidity", unit: "NTU", decimals: 1 },
 ];
 
+// The hardware's three sensors. Conductivity and the turbidity photodiode aren't calibrated yet, so
+// they read in the sensor's own millivolts instead of PSU and NTU.
+export const REAL_METRICS: Record<"temperature" | "salinity" | "turbidity", Metric> = {
+  temperature: METRICS[0],
+  salinity: { key: "salinity", label: "Salinity", unit: "mV", decimals: 0 },
+  turbidity: { key: "turbidity", label: "Turbidity", unit: "mV", decimals: 0 },
+};
+
 type Profile = Record<MetricKey, number> & { seed: number };
 
 // Buoy 1 sits off the stream mouth by Broadmead, so it runs murkier and dirtier
@@ -79,26 +87,18 @@ export function seriesFor(buoy: number, metric: MetricKey, now: number, override
   return points;
 }
 
-/** A metric averaged across buoys, over the last 24 hours. */
-export function networkHistory(buoys: number[], metric: MetricKey, now: number, overrides?: Overrides) {
-  const series = buoys.map((b) => seriesFor(b, metric, now, overrides));
-  return series[0].map((p, i) => ({
-    time: p.time,
-    value: series.reduce((sum, s) => sum + s[i].value, 0) / series.length,
-  }));
-}
-
 /**
- * Environment index, 0–100, higher is healthier.
- * Placeholder until the ML model is trained: a weighted score of how far each
- * average sits from a healthy reference for a freshwater lake.
+ * Environment index, 0–100, higher is healthier. Null when no buoy has reported.
+ * Placeholder until the ML model is trained. It scores only what the hardware measures in real
+ * units: water temperature against a healthy reference for a freshwater lake, and whether the
+ * cameras see plastic on their meshes. Salinity and turbidity join once they are calibrated.
  */
-export function environmentIndex(avg: Record<MetricKey, number>) {
+export function environmentIndex(avg: { temperature?: number; plastic?: boolean }) {
   const clamp = (v: number) => Math.min(100, Math.max(0, v));
-  const score =
-    0.2 * clamp(100 - Math.abs(avg.temperature - 10) * 12) +
-    0.35 * clamp(100 - avg.microplastics * 8) +
-    0.3 * clamp(100 - avg.turbidity * 3) +
-    0.15 * clamp(100 - Math.abs(avg.salinity - 0.1) * 200);
-  return Math.round(clamp(score));
+  const parts: [number, number][] = [];
+  if (avg.temperature !== undefined) parts.push([0.2, clamp(100 - Math.abs(avg.temperature - 10) * 12)]);
+  if (avg.plastic !== undefined) parts.push([0.35, avg.plastic ? 20 : 100]);
+  if (!parts.length) return null;
+  const weight = parts.reduce((sum, [w]) => sum + w, 0);
+  return Math.round(clamp(parts.reduce((sum, [w, v]) => sum + w * v, 0) / weight));
 }

@@ -7,7 +7,7 @@ import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/clien
 const BUCKET = process.env.IMAGES_BUCKET;
 const PREFIX = "images/";
 // Mesh node id -> dashboard buoy number (same map as the buoy-monitor stack's NodeBuoys)
-const NODE_BUOYS: Record<string, number> = JSON.parse(process.env.NODE_BUOYS ?? '{"2884855a1da8":1,"2884855a1cf0":2}');
+export const NODE_BUOYS: Record<string, number> = JSON.parse(process.env.NODE_BUOYS ?? '{"2884855a1da8":1,"2884855a1cf0":2}');
 
 let client: S3Client | null = null;
 const s3 = () => (client ??= new S3Client({ region: process.env.AWS_REGION ?? "us-east-2" }));
@@ -60,10 +60,8 @@ async function checks(): Promise<Map<string, Check>> {
   return new Map(items.map(({ key, label, reason, score, spots, width, height }) => [key, { label, reason, score, spots, width, height }]));
 }
 
-/** The newest `limit` photos across all buoys, newest first, and how many there are in total. */
-export async function listPhotos(limit: number) {
-  const labels = checks();
-  const estimates = api<Estimate[]>("/camera", []);
+/** Every photo in the bucket, newest first. */
+async function allPhotos() {
   const all: Omit<Photo, "check">[] = [];
   let token: string | undefined;
   do {
@@ -75,10 +73,27 @@ export async function listPhotos(limit: number) {
     }
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
   } while (token && all.length < 20_000);
-  all.sort((a, b) => b.time.localeCompare(a.time));
+  return all.sort((a, b) => b.time.localeCompare(a.time));
+}
+
+/** The newest `limit` photos across all buoys, newest first, and how many there are in total. */
+export async function listPhotos(limit: number) {
+  const labels = checks();
+  const estimates = api<Estimate[]>("/camera", []);
+  const all = await allPhotos();
   const byKey = await labels;
   const photos: Photo[] = all.slice(0, limit).map((p) => ({ ...p, check: byKey.get(p.key) ?? null }));
   return { total: all.length, photos, estimates: await estimates };
+}
+
+/** Each camera's newest photo and its label, by node. */
+export async function latestPhotos() {
+  const labels = checks();
+  const newest = new Map<string, { key: string; time: string; check: Check | null }>();
+  for (const p of await allPhotos()) if (!newest.has(p.node)) newest.set(p.node, { key: p.key, time: p.time, check: null });
+  const byKey = await labels;
+  for (const p of newest.values()) p.check = byKey.get(p.key) ?? null;
+  return newest;
 }
 
 /** Only photos are served: the bucket also holds readings and server builds. */
