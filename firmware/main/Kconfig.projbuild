@@ -1,0 +1,117 @@
+menu "Flotsam camera"
+
+choice FLOTSAM_CAMERA_APPLICATION
+    prompt "Camera application"
+    default FLOTSAM_CAMERA_MESH
+
+config FLOTSAM_CAMERA_MESH
+    bool "Mesh JPEG uploads"
+
+config FLOTSAM_CAMERA_TEST
+    bool "Camera-only hardware test (no Wi-Fi or mesh)"
+    help
+        Captures three VGA JPEGs and prints PASS/FAIL over USB.
+        Then send p over USB, or run view_camera_image.py, to save a JPEG.
+        No Wi-Fi credentials or Pi receiver are needed. This replaces
+        the normal camera/mesh application until disabled and reflashed.
+
+config FLOTSAM_CAMERA_WIFI
+    bool "2.4 GHz camera hotspot and browser viewer"
+    help
+        Laptop joins the camera's WPA2 hotspot and opens its HTTP page.
+        The page requests a fresh JPEG every 30 seconds.
+
+endchoice
+
+config FLOTSAM_CAMERA_PINMAP_CONFIRMED
+    bool "I verified the ESP32S3 CAM V1.2 camera pin map"
+    default n
+    help
+        Check main/camera_pins.h against your board before enabling.
+        No external LED, pump, sensor, or LoRa GPIOs are driven.
+
+config FLOTSAM_AP_PASSWORD
+    string "Camera hotspot password"
+    depends on FLOTSAM_CAMERA_WIFI
+    default ""
+    help
+        WPA2 password, 8-63 characters. flash_camera_test.py --wifi
+        generates and retains a password in an ignored local sdkconfig.
+
+if FLOTSAM_CAMERA_MESH
+
+config FLOTSAM_MESH_ROOT
+    bool "This camera is the designated mesh root"
+    default n
+    help
+        Enable on exactly one camera. It connects to the Pi hotspot;
+        other cameras may relay through it and intermediate cameras.
+
+config FLOTSAM_NODE_SLOT
+    int "Capture slot (different on each camera)"
+    range 0 4
+    default 0
+    help
+        Slots start six seconds apart and repeat every 30 seconds.
+        Timing is relative to boot, not synchronized across nodes.
+
+config FLOTSAM_PI_SSID
+    string "Pi hotspot SSID"
+    default "Flotsam-Pi"
+
+config FLOTSAM_PI_PASSWORD
+    string "Pi hotspot password"
+    default ""
+
+config FLOTSAM_RECEIVER_URL
+    string "Pi image upload URL"
+    default "http://10.42.0.1:8080/images"
+    help
+        POST raw image/jpeg. Receiver must persist and deduplicate
+        X-Image-ID before returning 200, 201, or 204; 202 is not an ACK.
+        Use the Pi's hotspot IPv4 address, reachable from all mesh layers.
+
+config FLOTSAM_UPLOAD_TOKEN
+    string "Pi upload bearer token (at least 16 printable characters)"
+    default ""
+    help
+        Shared with the receiver; not an AWS credential. Keep sdkconfig
+        and built firmware private. HTTP is for the WPA2 local network;
+        HTTPS verifies the receiver using the ESP certificate bundle.
+
+config FLOTSAM_READINGS_URL
+    string "Sensor readings URL"
+    default "http://192.168.4.1/readings"
+    help
+        POST one JSON reading (application/json) per interval to the shore gateway,
+        which forwards it over USB to the Pi as a FLOTSAM_READING line.
+
+config FLOTSAM_READING_INTERVAL_MS
+    int "Milliseconds between sensor readings"
+    range 2000 600000
+    default 5000
+
+config FLOTSAM_SAMPLE_MS
+    int "Sample line on-time per reading (pump + turbidity LED + excitation), ms"
+    range 800 10000
+    default 1500
+
+config FLOTSAM_TEMP_GPIO
+    int "DS18B20 data GPIO (needs 4.7k pull-up; the adapter board has one)"
+    default 0
+
+config FLOTSAM_LIGHT_GPIO
+    int "TEMT6000 signal GPIO (ADC1)"
+    default 1
+
+config FLOTSAM_COND_GPIO
+    int "Conductivity divider GPIO (ADC)"
+    default 14
+
+config FLOTSAM_SAMPLE_GPIO
+    int "Sample line GPIO (pump + turbidity LED + conductivity excitation)"
+    default 47
+
+endif
+
+endmenu

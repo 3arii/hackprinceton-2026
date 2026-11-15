@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.4,<5.5"
+  espressif/esp32-camera: "2.1.4"
+  espressif/mesh_lite: "1.0.2"
+  espressif/iot_bridge: "1.0.1"

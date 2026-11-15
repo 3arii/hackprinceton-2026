@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+firmware/build*/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/sdkconfig.*.local*
+firmware/gateway/build*/
+firmware/gateway/sdkconfig*
+!firmware/gateway/sdkconfig.defaults
+firmware/gateway/dependencies.lock
+firmware/gateway-credentials.local.json

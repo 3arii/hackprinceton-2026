@@ -1,0 +1,12 @@
+[Unit]
+Description=Flotsam: shore gateway collector (C3 Super Mini over USB) and local viewer
+After=network.target
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/flotsam/firmware/start_gateway.py --port /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:83:8D:F8-if00 --output /home/pi/flotsam-images --host 0.0.0.0
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
