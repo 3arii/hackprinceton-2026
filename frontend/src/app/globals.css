@@ -2181,6 +2181,25 @@ body {
   box-shadow: none;
 }
 
+/* A buoy that sends no photos: temperature takes the top row */
+.readings-grid[data-tiles="3"] .reading:first-child {
+  grid-column: 1 / -1;
+  box-shadow: none;
+}
+
+.readings-grid[data-tiles="3"] .reading:nth-child(2) {
+  border-bottom: 0;
+  box-shadow: 0.5px 0 0 rgb(255 255 255 / 0.07);
+}
+
+.readings-grid[data-tiles="3"] .reading:nth-child(3) {
+  box-shadow: none;
+}
+
+.readings {
+  position: relative;
+}
+
 .reading-camera {
   flex-direction: row;
   align-items: center;
@@ -2189,12 +2208,61 @@ body {
 }
 
 .reading-camera-text {
-  min-width: 0;
+  flex: none; /* the verdict never hides behind the photo; the photo gives way */
+}
+
+.reading-camera .reading-note {
+  margin-top: 6px;
+}
+
+.reading-camera .reading-note + .reading-note {
+  margin-top: 0;
+}
+
+.reading-detail {
+  max-width: 150px;
+  color: var(--ink-2);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.reading-note[data-stale] {
+  color: #ffb340;
+}
+
+.reading-camera .reading-verdict {
+  font-size: 19px;
+  line-height: 26px;
+  white-space: nowrap;
 }
 
 .reading-photo {
-  flex: none;
-  width: 88px;
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 92px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: zoom-in;
+  transition: transform 160ms ease-out;
+}
+
+.reading-photo:hover {
+  transform: scale(1.03);
+}
+
+.reading-photo:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.camera-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
   aspect-ratio: 4 / 3;
   overflow: hidden;
   border-radius: 8px;
@@ -2202,16 +2270,106 @@ body {
   box-shadow: 0 0 0 0.5px rgb(255 255 255 / 0.14);
 }
 
-.reading-photo img {
-  display: block;
+.camera-frame img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: opacity 200ms ease-out;
 }
 
-.reading-photo:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.camera-frame[data-state="loading"] img {
+  opacity: 0;
+}
+
+.camera-frame svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.camera-frame rect {
+  fill: none;
+  stroke: var(--signal);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.camera-missing {
+  padding: 0 6px;
+  color: #8e8e93;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+}
+
+/* The photo at full size, over the buoy's readings */
+.camera-view {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 16px 20px;
+  background: rgb(24 24 26 / 0.96);
+  animation: camera-in 160ms ease-out;
+}
+
+.camera-view .camera-frame {
+  flex: none;
+  align-self: center;
+  width: 62%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.camera-view-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.camera-view-side .reading-detail {
+  max-width: none;
+  margin-top: 8px;
+  white-space: normal;
+}
+
+.camera-view-side .reading-detail + .reading-note {
+  margin-top: 2px;
+}
+
+.camera-view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.camera-view-actions a {
+  text-decoration: none;
+}
+
+@keyframes camera-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .camera-view {
+    animation: none;
+  }
+
+  .reading-photo,
+  .camera-frame img {
+    transition: none;
+  }
 }
 
 /* When the dashboard last pulled the buoys' data */

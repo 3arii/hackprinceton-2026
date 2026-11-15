@@ -86,11 +86,38 @@ export async function listPhotos(limit: number) {
   return { total: all.length, photos, estimates: await estimates };
 }
 
-/** Each camera's newest photo and its label, by node. */
+/** Photos under a prefix. */
+async function photosUnder(prefix: string) {
+  const found: { key: string; time: string }[] = [];
+  let token: string | undefined;
+  do {
+    const res = await s3().send(new ListObjectsV2Command({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }));
+    for (const o of res.Contents ?? []) if (o.Key && o.LastModified && isPhotoKey(o.Key)) found.push({ key: o.Key, time: o.LastModified.toISOString() });
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token && found.length < 20_000);
+  return found;
+}
+
+/** A camera's newest photo. Looks in the last few days' folders first, so it stays quick as photos pile up. */
+async function newestPhoto(node: string) {
+  const day = (ago: number) => new Date(Date.now() - ago * 86_400_000).toISOString().slice(0, 10).replaceAll("-", "/");
+  for (const prefix of [1, 0, -1].map((d) => `${PREFIX}${node}/${day(-d)}/`).concat(`${PREFIX}${node}/`)) {
+    const found = await photosUnder(prefix);
+    if (found.length) return found.reduce((a, b) => (b.time > a.time ? b : a));
+  }
+  return null;
+}
+
+/** Each camera's newest photo and its label, by node. A camera that has sent none isn't in the map. */
 export async function latestPhotos() {
   const labels = checks();
   const newest = new Map<string, { key: string; time: string; check: Check | null }>();
-  for (const p of await allPhotos()) if (!newest.has(p.node)) newest.set(p.node, { key: p.key, time: p.time, check: null });
+  await Promise.all(
+    Object.keys(NODE_BUOYS).map(async (node) => {
+      const p = await newestPhoto(node);
+      if (p) newest.set(node, { ...p, check: null });
+    }),
+  );
   const byKey = await labels;
   for (const p of newest.values()) p.check = byKey.get(p.key) ?? null;
   return newest;

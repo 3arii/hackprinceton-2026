@@ -3,7 +3,7 @@
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { METRICS, REAL_METRICS, seriesFor, type Metric, type MetricKey, type Overrides } from "@/lib/buoyData";
 import type { BuoyData } from "@/lib/readings";
-import { when } from "@/lib/useFleet";
+import CameraTile from "@/components/CameraTile";
 
 const TICK_MS = 5000;
 const SPARK = { width: 200, height: 34, pad: 4 };
@@ -28,29 +28,6 @@ function Empty({ label, note }: { label: string; note: string }) {
       <div className="reading-label">{label}</div>
       <div className="reading-value reading-none">&mdash;</div>
       <div className="reading-note">{note}</div>
-    </div>
-  );
-}
-
-const VERDICT = { clean: "Clean", microplastic: "Microplastic", blocked: "Blocked" } as const;
-
-/** What the camera's model made of its newest photo, beside the photo. No count: the flow isn't measured. */
-function Camera({ photo }: { photo: BuoyData["photo"] }) {
-  if (!photo) return <Empty label="Microplastics" note="No photo yet" />;
-  const label = photo.check?.label;
-  return (
-    <div className="reading reading-camera">
-      <div className="reading-camera-text">
-        <div className="reading-label">Microplastics</div>
-        <div className="reading-value reading-verdict" data-label={label ?? "none"}>
-          {label ? VERDICT[label] : "Not checked"}
-        </div>
-        <div className="reading-note">Photo from {when(photo.time)}</div>
-      </div>
-      <a className="reading-photo" href="/images" target="_blank" rel="noreferrer" aria-label="Open the camera photos">
-        {/* eslint-disable-next-line @next/next/no-img-element -- private S3 photo through our own route */}
-        <img src={`/api/images/file?key=${encodeURIComponent(photo.key)}`} alt={`Newest mesh photo, ${label ?? "not checked"}`} />
-      </a>
     </div>
   );
 }
@@ -127,7 +104,7 @@ type Props = {
   onReset?(): void;
 };
 
-/** What the hardware reported: three sensors and the camera's verdict. */
+/** What the hardware reported: its sensors and, from a buoy with a camera, the model's verdict on the mesh. */
 function LiveReadings({ data, loading }: { data?: BuoyData; loading?: boolean }) {
   const none = loading ? "Loading" : "No reading yet";
   const tile = (key: "temperature" | "salinity" | "turbidity") => {
@@ -135,11 +112,12 @@ function LiveReadings({ data, loading }: { data?: BuoyData; loading?: boolean })
     const points = data?.series[key] ?? [];
     return points.length ? <Reading key={key} metric={m} points={points} span="its last run" /> : <Empty key={key} label={m.label} note={none} />;
   };
+  const photo = data?.photo;
   return (
     <div className="readings">
-      <div className="readings-grid">
+      <div className="readings-grid" data-tiles={photo ? 4 : 3}>
         {tile("temperature")}
-        {data ? <Camera photo={data.photo} /> : <Empty label="Microplastics" note={none} />}
+        {photo && <CameraTile photo={photo} lastReading={data.lastReading} />}
         {tile("salinity")}
         {tile("turbidity")}
       </div>
