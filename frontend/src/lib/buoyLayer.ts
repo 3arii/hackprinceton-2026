@@ -33,6 +33,8 @@ export const BUOY_BODY_CENTER = BUOY_FLOAT + 0.12;
 export type BuoyLayer = CustomLayerInterface & {
   /** Highlight per buoy: 0 none, 0.5 hovered, 1 selected. Eased in the render loop. */
   setLevels(levels: number[]): void;
+  /** Put buoy `i` somewhere else; its links follow. */
+  movePoint(i: number, to: [number, number]): void;
 };
 
 // Clips everything below the water surface (y = 0)
@@ -284,10 +286,11 @@ export function createBuoyLayer(id: string, points: [number, number][]): BuoyLay
   const camera = new THREE.Camera();
   const scene = new THREE.Scene();
 
-  const anchors = points.map((p) => {
+  const anchor = (p: [number, number]) => {
     const m = MercatorCoordinate.fromLngLat(p, 0);
     return new THREE.Vector3((m.x - origin.x) / metersToMerc, 0, (m.y - origin.y) / metersToMerc);
-  });
+  };
+  const anchors = points.map(anchor);
 
   const buoys = anchors.map((at, i) => {
     const b = buildBuoy(i * 0.37);
@@ -402,6 +405,17 @@ export function createBuoyLayer(id: string, points: [number, number][]): BuoyLay
     },
     setLevels(next) {
       targets = next;
+      map?.triggerRepaint();
+    },
+    movePoint(i, to) {
+      anchors[i].copy(anchor(to));
+      buoys[i].rig.position.copy(anchors[i]);
+      for (const a of arcs) {
+        if (!a.ends.includes(i)) continue;
+        a.material.uniforms.uA.value.copy(anchors[a.ends[0]]);
+        a.material.uniforms.uB.value.copy(anchors[a.ends[1]]);
+        a.span = anchors[a.ends[0]].distanceTo(anchors[a.ends[1]]);
+      }
       map?.triggerRepaint();
     },
   };
