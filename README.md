@@ -2,6 +2,22 @@
 
 Solar powered buoys that track water quality 200x cheaper than the next closest instrument.
 
+![ESP32-S3](https://img.shields.io/badge/ESP32--S3-E7352C?logo=espressif&logoColor=white)
+![ESP-IDF](https://img.shields.io/badge/ESP--IDF-5.4-E7352C?logo=espressif&logoColor=white)
+![Raspberry Pi](https://img.shields.io/badge/Raspberry%20Pi-A22846?logo=raspberrypi&logoColor=white)
+![C](https://img.shields.io/badge/C-00599C?logo=c&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
+![AWS Lambda](https://img.shields.io/badge/AWS%20Lambda-FF9900)
+![Amazon S3](https://img.shields.io/badge/Amazon%20S3-569A31)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-4053D6)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?logo=langgraph&logoColor=white)
+![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?logo=langchain&logoColor=white)
+![MapLibre](https://img.shields.io/badge/MapLibre-396CB2?logo=maplibre&logoColor=white)
+![3D printed](https://img.shields.io/badge/3D%20printed-F26016)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
+
 ![Lincoln on the water](docs/images/render_on_water.jpg)
 
 [Demo video](https://youtu.be/Q-0arEQO5fQ) | [Devpost](https://devpost.com/software/bouy-7tofbl) | Built at HackPrinceton Fall '26
@@ -171,3 +187,7 @@ cd frontend && npm install && npm run dev
 - Leo Pozhenko - hardware, sensors, Pi pipeline
 - Mikhail Chalakov - gateway and firmware
 - Deniz Lapsekili - AWS and the agent
+
+## License
+
+[MIT](LICENSE)
