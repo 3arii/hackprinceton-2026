@@ -27,13 +27,14 @@ def credentials(path):
     return values
 
 
-def profile(role, values):
+def profile(role, values, relay=False, slot=0):
     if role == "gateway":
         return ('CONFIG_FLOTSAM_GATEWAY_SSID="Flotsam-Gateway"\n'
                 f'CONFIG_FLOTSAM_GATEWAY_PASSWORD="{values["password"]}"\n'
                 f'CONFIG_FLOTSAM_GATEWAY_TOKEN="{values["token"]}"\n')
+    root = "# CONFIG_FLOTSAM_MESH_ROOT is not set\n" if relay else "CONFIG_FLOTSAM_MESH_ROOT=y\n"
     return ('CONFIG_FLOTSAM_CAMERA_MESH=y\nCONFIG_FLOTSAM_CAMERA_PINMAP_CONFIRMED=y\n'
-            'CONFIG_FLOTSAM_MESH_ROOT=y\nCONFIG_FLOTSAM_NODE_SLOT=0\n'
+            f'{root}CONFIG_FLOTSAM_NODE_SLOT={slot}\n'
             'CONFIG_FLOTSAM_PI_SSID="Flotsam-Gateway"\n'
             f'CONFIG_FLOTSAM_PI_PASSWORD="{values["password"]}"\n'
             f'CONFIG_BRIDGE_SOFTAP_PASSWORD="{values["mesh_password"]}"\n'
@@ -48,6 +49,9 @@ def main(argv=None):
     parser.add_argument("--build-only", action="store_true")
     parser.add_argument("--confirm-pins", action="store_true", help="Confirm the existing ESP32S3 CAM V1.2 pin map")
     parser.add_argument("--gateway-chip", choices=("esp32c3", "esp32s3"), default="esp32c3")
+    parser.add_argument("--relay", action="store_true",
+                        help="Camera joins the mesh through another camera (never directly to the gateway); default is the root camera")
+    parser.add_argument("--slot", type=int, default=0, choices=range(5), help="Camera capture slot, different on each camera")
     args = parser.parse_args(argv)
     if not args.build_only and (not args.port or not Path(args.port).exists()):
         parser.error("Flashing requires --port pointing to the intended connected USB board")
@@ -61,13 +65,13 @@ def main(argv=None):
             raise ValueError("ESP-IDF 5.4 is required")
         values = credentials(FIRMWARE_DIR / "gateway-credentials.local.json")
         project = FIRMWARE_DIR / "gateway" if args.role == "gateway" else FIRMWARE_DIR
-        config = project / "sdkconfig.gateway-link.local"
+        config = project / ("sdkconfig.gateway-link-relay.local" if args.role == "camera" and args.relay else "sdkconfig.gateway-link.local")
         # Seed the role each run so a stale application choice cannot select a camera test.
         fd = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as stream:
-            stream.write(profile(args.role, values))
+            stream.write(profile(args.role, values, args.relay, args.slot))
         target = args.gateway_chip if args.role == "gateway" else "esp32s3"
-        build = "build-link-" + target
+        build = "build-link-" + target + ("-relay" if args.role == "camera" and args.relay else "")
         command = ["bash", "-c",
                    'source "$1/export.sh" && shift && idf.py "$@"',
                    "flash_gateway_link", str(idf), "-B", build, "-D", f"SDKCONFIG={config}",

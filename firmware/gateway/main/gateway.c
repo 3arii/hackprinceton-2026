@@ -124,6 +124,48 @@ static esp_err_t receive_image(httpd_req_t *req)
     return httpd_resp_sendstr(req, "Saved on USB host");
 }
 
+// Sensor readings: one small JSON object per POST, forwarded as a single USB line
+//   FLOTSAM_READING <node-id> <json>
+// Readings are a live stream, so the gateway answers 204 once the line is written to USB.
+static esp_err_t receive_reading(httpd_req_t *req)
+{
+    char authorization[160], type[40], node[13], body[384];
+    char expected[] = "Bearer " CONFIG_FLOTSAM_GATEWAY_TOKEN;
+    if (httpd_req_get_hdr_value_str(req, "Authorization", authorization, sizeof(authorization)) != ESP_OK ||
+        strcmp(authorization, expected) != 0) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "Invalid upload token");
+        return ESP_FAIL;
+    }
+    if (httpd_req_get_hdr_value_str(req, "Content-Type", type, sizeof(type)) != ESP_OK ||
+        strncmp(type, "application/json", 16) != 0 ||
+        httpd_req_get_hdr_value_str(req, "X-Node-ID", node, sizeof(node)) != ESP_OK ||
+        !identifier(node, 12, 12) || req->content_len < 2 || req->content_len >= sizeof(body)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid reading metadata or size");
+        return ESP_FAIL;
+    }
+    size_t received = 0;
+    while (received < req->content_len) {
+        int n = httpd_req_recv(req, body + received, req->content_len - received);
+        if (n <= 0) break;
+        received += n;
+    }
+    body[received] = 0;
+    bool printable = received == req->content_len && body[0] == '{' && body[received - 1] == '}';
+    for (size_t i = 0; printable && i < received; ++i) printable = body[i] >= 32 && body[i] <= 126;
+    if (!printable) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Reading must be one line of JSON");
+        return ESP_FAIL;
+    }
+    char line[440];
+    snprintf(line, sizeof(line), "\nFLOTSAM_READING %s %s\n", node, body);
+    if (!usb_send(line, esp_timer_get_time() + 2000000)) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "USB host not reading");
+    }
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, NULL, 0);
+}
+
 void app_main(void)
 {
     size_t password_len = strlen(CONFIG_FLOTSAM_GATEWAY_PASSWORD);
@@ -157,5 +199,7 @@ void app_main(void)
     ESP_ERROR_CHECK(httpd_start(&server, &config));
     httpd_uri_t upload = {.uri = "/images", .method = HTTP_POST, .handler = receive_image};
     ESP_ERROR_CHECK(httpd_register_uri_handler(server, &upload));
-    ESP_LOGI("gateway", "Ready: %s; JPEG uploads to http://192.168.4.1/images -> USB host", CONFIG_FLOTSAM_GATEWAY_SSID);
+    httpd_uri_t readings = {.uri = "/readings", .method = HTTP_POST, .handler = receive_reading};
+    ESP_ERROR_CHECK(httpd_register_uri_handler(server, &readings));
+    ESP_LOGI("gateway", "Ready: %s; JPEGs to /images, sensor readings to /readings -> USB host", CONFIG_FLOTSAM_GATEWAY_SSID);
 }

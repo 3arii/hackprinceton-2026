@@ -6,6 +6,7 @@ import base64
 import fcntl
 from glob import glob
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,8 @@ import tempfile
 import termios
 import time
 import tty
+
+from events import SIGNALS, EventDetector, describe as describe_event
 
 
 class ImageReceiver:
@@ -77,6 +80,49 @@ class ImageReceiver:
         return None
 
 
+READINGS_FILE = "readings.jsonl"
+READING_FIELDS = {"node", "seq", "uptime_ms", "temp_c", "light_mv", "ambient_mv", "cond_mv", "rssi"}
+
+
+def parse_reading(line):
+    """FLOTSAM_READING <node> <json> -> dict, or ValueError. The JSON node must match the line's node."""
+    fields = line.strip().decode("ascii").split(" ", 2)
+    if len(fields) != 3 or fields[0] != "FLOTSAM_READING" or not re.fullmatch(r"[a-f0-9]{12}", fields[1]):
+        raise ValueError("Invalid reading header")
+    reading = json.loads(fields[2])
+    if not isinstance(reading, dict) or reading.get("node") != fields[1] or not READING_FIELDS <= set(reading):
+        raise ValueError("Reading JSON is missing fields or names another node")
+    for key in READING_FIELDS - {"node"}:
+        value = reading[key]
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+            raise ValueError(f"Reading field {key} is not a number")
+    level = reading.get("level")
+    if level is not None and (isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 16):
+        raise ValueError("Reading field level is not a mesh level")
+    reading = {key: reading[key] for key in sorted(READING_FIELDS)}
+    if level is not None:
+        reading["level"] = level            # mesh hop: 1 = talks to the gateway directly, 2 = relayed by another buoy
+    reading["received_at"] = round(time.time(), 3)
+    return reading
+
+
+def save_reading(output, reading):
+    """Append one reading to <output>/readings.jsonl and flush it to disk."""
+    output.mkdir(parents=True, exist_ok=True)
+    with open(output / READINGS_FILE, "a") as stream:
+        stream.write(json.dumps(reading, separators=(",", ":")) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def describe(reading):
+    def show(value, unit):
+        return "--" if value is None else f"{value}{unit}"
+    return (f"Reading {reading['node']} #{reading['seq']}: temp {show(reading['temp_c'], ' C')}, "
+            f"light {show(reading['light_mv'], ' mV')} (ambient {show(reading['ambient_mv'], ' mV')}), "
+            f"conductivity {show(reading['cond_mv'], ' mV')}, rssi {reading['rssi']}, mesh level {reading.get('level', '?')}")
+
+
 def write_ack(fd, acknowledgment):
     deadline = time.monotonic() + 2
     while acknowledgment:
@@ -98,6 +144,8 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, default=Path("/tmp/flotsam-images"))
     parser.add_argument("--count", type=int, default=0, help="Exit after this many deliveries; 0 runs continuously")
     parser.add_argument("--timeout", type=float, default=0, help="Exit if no complete image arrives for this many seconds")
+    parser.add_argument("--events", default="temperature",
+                        help="Signals that raise live events: comma list of " + ", ".join(SIGNALS) + "; empty turns events off")
     args = parser.parse_args(argv)
     if args.count < 0 or args.timeout < 0:
         parser.error("count and timeout must be nonnegative")
@@ -105,6 +153,13 @@ def main(argv=None):
     if not args.port and len(ports) != 1:
         parser.error(f"Specify the gateway --port; connected devices: {ports}")
     receiver = ImageReceiver(args.output.resolve())
+    kinds = [k for k in args.events.split(",") if k]
+    if any(k not in SIGNALS for k in kinds):
+        parser.error(f"--events takes {', '.join(SIGNALS)}")
+    detector = EventDetector(receiver.output, kinds) if kinds else None
+    if detector:
+        primed = detector.warm_from(receiver.output / READINGS_FILE)
+        print(f"Live events on: {', '.join(kinds)} (baseline primed from {primed} saved readings)", flush=True)
     pending = bytearray()
     saved = 0
     last_image = time.monotonic()
@@ -121,7 +176,7 @@ def main(argv=None):
                 settings = termios.tcgetattr(fd)
                 settings[4] = settings[5] = termios.B115200
                 termios.tcsetattr(fd, termios.TCSANOW, settings)
-                print(f"Listening on {args.port or ports[0]}; images: {receiver.output}", flush=True)
+                print(f"Listening on {args.port or ports[0]}; images and {READINGS_FILE}: {receiver.output}", flush=True)
                 while not args.count or saved < args.count:
                     if args.timeout and time.monotonic() - last_image > args.timeout:
                         raise TimeoutError("No complete image received before timeout")
@@ -133,6 +188,16 @@ def main(argv=None):
                     pending.extend(data)
                     while b"\n" in pending:
                         line, _, pending = pending.partition(b"\n")
+                        if line.startswith(b"FLOTSAM_READING "):
+                            try:
+                                reading = parse_reading(bytes(line))
+                                save_reading(receiver.output, reading)
+                                print(describe(reading), flush=True)
+                                for event in detector.feed(reading) if detector else ():
+                                    print(describe_event(event), flush=True)
+                            except (ValueError, UnicodeError) as exc:
+                                print(f"Rejected reading: {exc}", flush=True)
+                            continue
                         try:
                             result = receiver.feed(bytes(line))
                             if result:
