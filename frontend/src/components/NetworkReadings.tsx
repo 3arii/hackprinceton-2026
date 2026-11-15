@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { REAL_METRICS, environmentIndex } from "@/lib/buoyData";
+import { METRICS, REAL_METRICS, environmentIndex } from "@/lib/buoyData";
 import { Reading } from "@/components/BuoyReadings";
-import type { BuoyData, Point, RealMetric } from "@/lib/readings";
+import { decimalsFor, type BuoyMetric } from "@/lib/carnegie";
+import type { Point } from "@/lib/readings";
 
 const G = { size: 240, cx: 120, cy: 118, r: 92, sweep: 240 };
 
@@ -92,24 +93,28 @@ function Gauge({ score: real }: { score: number | null }) {
 }
 
 /** A metric averaged across the buoys that report it, over the stretch they all cover. */
-function average(buoys: BuoyData[], key: RealMetric): Point[] {
-  const series = buoys.map((b) => b.series[key]).filter((p) => p.length);
+function average(buoys: Record<BuoyMetric, Point[]>[], key: BuoyMetric): Point[] {
+  const series = buoys.map((b) => b[key]).filter((p) => p.length);
   if (!series.length) return [];
   const n = Math.min(...series.map((p) => p.length));
   const tails = series.map((p) => p.slice(-n));
   return tails[0].map((p, i) => ({ time: p.time, value: tails.reduce((sum, t) => sum + t[i].value, 0) / tails.length }));
 }
 
-export default function NetworkReadings({ buoys, loading }: { buoys: BuoyData[]; loading?: boolean }) {
-  const series = { temperature: average(buoys, "temperature"), salinity: average(buoys, "salinity"), turbidity: average(buoys, "turbidity") };
-  const labels = buoys.map((b) => b.photo?.check?.label).filter((l) => l === "clean" || l === "microplastic");
-  const plastic = labels.length ? labels.includes("microplastic") : undefined;
+/** Every buoy's readings (each recorded in the lake or live, see lib/carnegie.ts), averaged. */
+export default function NetworkReadings({ buoys, loading }: { buoys: Record<BuoyMetric, Point[]>[]; loading?: boolean }) {
+  const keys: BuoyMetric[] = ["temperature", "microplastics", "salinity", "turbidity"];
+  const series = Object.fromEntries(keys.map((k) => [k, average(buoys, k)])) as Record<BuoyMetric, Point[]>;
   const none = loading ? "Loading" : "No reading yet";
 
-  const tile = (key: RealMetric) => {
-    const label = `Avg. ${REAL_METRICS[key].label.toLowerCase()}`;
+  const tile = (key: BuoyMetric) => {
+    const base =
+      key === "microplastics"
+        ? { ...METRICS.find((m) => m.key === "microplastics")!, decimals: decimalsFor(series[key].map((p) => p.value)) }
+        : REAL_METRICS[key];
+    const label = `Avg. ${base.label.toLowerCase()}`;
     return series[key].length ? (
-      <Reading key={key} metric={{ ...REAL_METRICS[key], label }} points={series[key]} span="the last run" />
+      <Reading key={key} metric={{ ...base, label }} points={series[key]} span="the last run" />
     ) : (
       <div className="reading" key={key}>
         <div className="reading-label">{label}</div>
@@ -121,21 +126,16 @@ export default function NetworkReadings({ buoys, loading }: { buoys: BuoyData[];
 
   return (
     <div className="network-readings">
-      <Gauge score={environmentIndex({ temperature: series.temperature.at(-1)?.value, plastic })} />
+      <Gauge
+        score={environmentIndex({
+          temperature: series.temperature.at(-1)?.value,
+          turbidity: series.turbidity.at(-1)?.value,
+          microplastics: series.microplastics.at(-1)?.value,
+        })}
+      />
       <div className="readings-grid">
         {tile("temperature")}
-        <div className="reading">
-          <div className="reading-label">Microplastics</div>
-          <div
-            className={plastic === undefined ? "reading-value reading-none" : "reading-value reading-verdict"}
-            data-label={plastic === undefined ? undefined : plastic ? "microplastic" : "clean"}
-          >
-            {plastic === undefined ? "\u2014" : plastic ? "Microplastic" : "Clean"}
-          </div>
-          <div className="reading-note">
-            {plastic === undefined ? (loading ? "Loading" : "No photo checked yet") : `${labels.length} camera${labels.length === 1 ? "" : "s"} checked`}
-          </div>
-        </div>
+        {tile("microplastics")}
         {tile("salinity")}
         {tile("turbidity")}
       </div>

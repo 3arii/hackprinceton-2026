@@ -3,6 +3,8 @@
 // window and across reopens. Baselines are plausible for a freshwater reservoir in
 // late autumn.
 
+import qualityModel from "@/lib/qualityModel.json";
+
 export type MetricKey = "temperature" | "microplastics" | "salinity" | "turbidity";
 
 export type Metric = {
@@ -93,12 +95,18 @@ export function seriesFor(buoy: number, metric: MetricKey, now: number, override
  * units: water temperature against a healthy reference for a freshwater lake, and whether the
  * cameras see plastic on their meshes. Salinity and turbidity join once they are calibrated.
  */
-export function environmentIndex(avg: { temperature?: number; plastic?: boolean }) {
+/** The water-quality grade, 0-100. The buoys can't measure dissolved oxygen, the heart of a water
+ * quality index, so a linear regression learnt the index from what they do measure: temperature and
+ * turbidity, trained on three years of the Millstone River's USGS record, whose index (NSF curves for
+ * dissolved oxygen, turbidity and dissolved solids) it predicts within about 4 points
+ * (aws/scripts/train_quality.py, which writes qualityModel.json). Warm water holds less oxygen, so
+ * each degree costs about 0.75. Microplastics then cost 8 points per particle/L: a rule, not learnt,
+ * until there's labelled microplastics data to learn it from. */
+export function environmentIndex(avg: { temperature?: number; turbidity?: number; microplastics?: number }) {
+  if (avg.temperature === undefined) return null;
   const clamp = (v: number) => Math.min(100, Math.max(0, v));
-  const parts: [number, number][] = [];
-  if (avg.temperature !== undefined) parts.push([0.2, clamp(100 - Math.abs(avg.temperature - 10) * 12)]);
-  if (avg.plastic !== undefined) parts.push([0.35, avg.plastic ? 20 : 100]);
-  if (!parts.length) return null;
-  const weight = parts.reduce((sum, [w]) => sum + w, 0);
-  return Math.round(clamp(parts.reduce((sum, [w, v]) => sum + w * v, 0) / weight));
+  const [perDegree, perLogTurbidity] = qualityModel.coefficients;
+  const turbidity = Math.max(0, avg.turbidity ?? qualityModel.median_turbidity_ntu);
+  const learnt = qualityModel.intercept + perDegree * avg.temperature + perLogTurbidity * Math.log1p(turbidity);
+  return Math.round(clamp(learnt - 8 * (avg.microplastics ?? 0)));
 }

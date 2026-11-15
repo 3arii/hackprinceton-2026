@@ -9,7 +9,9 @@ explains a new photo patch by patch from them.
   2. match overall brightness and colour cast per channel (exposure and white balance drift)
   3. for every small patch, find the closest patch in the nearest clean photos, letting it move a
      little (parallax: the LED behind the mesh moves against the holes when the camera does)
-  4. the patches that no clean photo explains, grouped, are the spots
+  4. the patches that no clean photo explains, grouped, are the spots; under a backlight a particle
+     is a shadow, so only spots darker than the clean view count (a brighter one is glare, or the
+     LED showing through differently as the camera moves)
 
 and labels the photo
 
@@ -20,8 +22,11 @@ and labels the photo
 The threshold comes from leave-one-out over the training photos: each is scored against the others,
 and the threshold sits a margin above the worst of them, region by region, so the edges of the
 bright spots (which shimmer as the camera wobbles) tolerate more than the steady background. The
-more clean photos, the more wobble and lighting drift it tolerates. Refit whenever the camera or
-the mesh is moved for good.
+more clean photos, the more wobble and lighting drift it tolerates.
+
+A model knows one camera angle. A photo from another angle comes back blocked with new_view set,
+and the pipeline (camera.py) fits a new model once a few photos in a row agree on the new view, so
+the camera can be re-aimed, bumped or bobbing on the water and the checking carries on.
 """
 
 import json
@@ -50,6 +55,7 @@ CAST = 0.15  # colour cast against the clean photos, log units, past which the l
 EXPOSURE = 0.4  # brightness change against the clean photos, log units (x1.5)
 MIN_SPOT = 3  # px at working scale; smaller clusters are noise
 EDGE = 6  # px at working scale along the frame edge left out: the camera moving uncovers it
+TEXTURE = 0.08  # spread of log brightness under which a photo shows nothing: dark, covered or fogged
 FAR = 1e6  # patch error where a clean photo has no pixels
 IMAGES = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 NAN3 = (np.nan,) * 3
@@ -202,12 +208,22 @@ def _score(model, small, skip=None):
     return score, resid, shift, None
 
 
+def textured(img):
+    """Whether the photo shows anything at all, so it could be a view of the mesh."""
+    return float(_log(_small(img)).mean(2).std()) >= TEXTURE
+
+
 def fit(paths):
     """Train on photos of the clean mesh. Returns the model; model.info is the training report."""
-    paths = files(paths)
-    if len(paths) < 3:
+    return fit_images([(p.name, read(p)) for p in files(paths)])
+
+
+def fit_images(photos):
+    """fit() on (name, image) pairs already in memory."""
+    names = [n for n, _ in photos]
+    if len(photos) < 3:
         raise SystemExit("need at least 3 photos of the clean mesh")
-    smalls = [_small(read(p)) for p in paths]
+    smalls = [_small(img) for _, img in photos]
     if len({s.shape for s in smalls}) > 1:
         raise SystemExit("photos differ in size")
 
@@ -225,7 +241,7 @@ def fit(paths):
     loo, maps = {}, []
     for k, i in enumerate(keep):
         score, _, _, blocked = _score(model, smalls[i], skip=k)
-        loo[paths[i].name] = None if blocked else round(float(score.max()), 2)  # None: alone where it sits
+        loo[names[i]] = None if blocked else round(float(score.max()), 2)  # None: alone where it sits
         if not blocked:
             maps.append(score)
     if not maps:
@@ -235,8 +251,8 @@ def fit(paths):
     h, w = smalls[0].shape[:2]
     model.info = {
         "trained": datetime.now(UTC).isoformat(timespec="seconds"),
-        "photos": [paths[i].name for i in keep],
-        "dropped": [paths[i].name for i in range(len(paths)) if i not in keep],  # not the same view
+        "photos": [names[i] for i in keep],
+        "dropped": [names[i] for i in range(len(names)) if i not in keep],  # not the same view
         "size": [round(w / SCALE), round(h / SCALE)],
         "threshold": {q: round(float(np.percentile(model.limit, p)), 2) for q, p in (("min", 0), ("median", 50), ("max", 100))},
         "leave_one_out": loo,
@@ -258,6 +274,8 @@ def check(model, img, name=""):
         out["shift"] = [round(float(v) / SCALE, 1) for v in shift]
     if blocked:
         out["reason"] = blocked
+        # Not the view this model knows (re-aimed, moved, relit) but a view of something: a new model can learn it
+        out["new_view"] = textured(img)
         return out
     score /= model.limit
     out["score"] = round(float(score.max()), 2)  # 1 or more is flagged
@@ -272,12 +290,13 @@ def check(model, img, name=""):
         if area < MIN_SPOT:
             continue
         inside = labels == i
+        if resid[inside].mean() >= 0:
+            continue  # brighter than clean: glare or the LED, not something blocking the light
         out["spots"].append({
             "x": round(float(centroids[i][0]) / SCALE), "y": round(float(centroids[i][1]) / SCALE),
             "bbox": [round(x / SCALE), round(y / SCALE), round((x + w) / SCALE), round((y + h) / SCALE)],
             "area_px": round(float(area) / SCALE**2),
             "strength": round(float(score[inside].max()), 2),
-            "darker": bool(resid[inside].mean() < 0),  # blocks light, as an opaque particle does
         })
     out["spots"].sort(key=lambda p: -p["strength"])
     out["label"] = "microplastic" if out["spots"] else "clean"

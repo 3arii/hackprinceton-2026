@@ -73,7 +73,7 @@ async function minute(key: string) {
 }
 
 /** A node's newest reading files, oldest first. Keys sort by time. */
-async function readingKeys(node: string) {
+async function readingKeys(node: string, count = FILES) {
   const keys: string[] = [];
   let token: string | undefined;
   do {
@@ -81,7 +81,7 @@ async function readingKeys(node: string) {
     for (const o of res.Contents ?? []) if (o.Key?.endsWith(".jsonl")) keys.push(o.Key);
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
   } while (token);
-  return keys.sort().slice(-FILES);
+  return keys.sort().slice(-count);
 }
 
 async function buoyData(node: string, buoy: number, photo: BuoyData["photo"]): Promise<BuoyData> {
@@ -95,6 +95,60 @@ async function buoyData(node: string, buoy: number, photo: BuoyData["photo"]): P
     series: { temperature: series("temperature"), salinity: series("salinity"), turbidity: series("turbidity") },
     photo,
   };
+}
+
+/** One 5-second sample as the node sent it; a sensor that failed sends null. */
+export type RawSample = {
+  seq: number | null;
+  uptime_ms: number | null; // since the node booted, so a drop means it restarted
+  received_at: number; // unix seconds, when the gateway heard it
+  temp_c: number | null;
+  light_mv: number | null;
+  ambient_mv: number | null;
+  cond_mv: number | null;
+  rssi: number | null; // dBm of the mesh link
+  level: number | null; // mesh hop: 1 talks to the gateway, 2 is relayed through another buoy
+};
+
+const field = (v: unknown) => (num(v) ? v : null);
+const raw = new Map<string, RawSample[]>();
+
+/** Every sample in a node's newest `files` reading files (about a minute each), oldest first: the raw
+ * stream, failures included, for watching the hardware. */
+export async function samples(node: string, files: number): Promise<RawSample[]> {
+  const keys = await readingKeys(node, files);
+  const keep = new Set(keys);
+  for (const k of raw.keys()) if (k.startsWith(`readings/${node}/`) && !keep.has(k)) raw.delete(k);
+  const all = await Promise.all(
+    keys.map(async (key) => {
+      if (!raw.has(key)) {
+        const res = await s3().send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+        const out: RawSample[] = [];
+        for (const line of (await res.Body!.transformToString()).split("\n")) {
+          try {
+            const s = JSON.parse(line);
+            if (!num(s.received_at)) continue;
+            out.push({
+              seq: field(s.seq),
+              uptime_ms: field(s.uptime_ms),
+              received_at: s.received_at,
+              temp_c: field(s.temp_c),
+              light_mv: field(s.light_mv),
+              ambient_mv: field(s.ambient_mv),
+              cond_mv: field(s.cond_mv),
+              rssi: field(s.rssi),
+              level: field(s.level),
+            });
+          } catch {
+            // a blank or torn line
+          }
+        }
+        raw.set(key, out);
+      }
+      return raw.get(key)!;
+    }),
+  );
+  return all.flat().sort((a, b) => a.received_at - b.received_at);
 }
 
 let cached: { at: number; fleet: Promise<Fleet> } | null = null;

@@ -7,10 +7,14 @@ from microplastics.concentration import estimate
 T0 = datetime(2026, 11, 15, 6, 0)
 
 
-def run(counts, every=1.0, label=None, start=0.0):
-    """One photo every `every` minutes with these spot counts."""
-    return [((T0 + timedelta(minutes=start + i * every)).isoformat() + "Z", label or ("microplastic" if n else "clean"), n)
-            for i, n in enumerate(counts)]
+def run(counts, every=1.0, label=None, start=0.0, moving=False):
+    """One photo every `every` minutes with this many spots: caught particles stay put, glints move."""
+    return [{
+        "time": (T0 + timedelta(minutes=start + i * every)).isoformat() + "Z",
+        "label": label or ("microplastic" if n else "clean"),
+        "spots": [{"x": 100 + 90 * j + (137 * i % 400 if moving else 0), "y": 120 + (61 * i % 300 if moving else 0)} for j in range(n)],
+        "shift": [3 * (i % 2), -2 * (i % 2)],  # the camera bobs a little
+    } for i, n in enumerate(counts)]
 
 
 def test_a_clean_mesh_bounds_the_concentration_from_above():
@@ -28,6 +32,10 @@ def test_particles_over_water_seen():
 
 def test_one_odd_photo_changes_nothing():
     assert estimate(run([0, 0, 1, 0, 0, 0]), flow_lpm=1.0)["caught"] == 0
+
+
+def test_spots_that_move_between_photos_are_not_particles():
+    assert estimate(run([0, 1, 1, 2, 1, 3, 2], moving=True), flow_lpm=1.0)["caught"] == 0
 
 
 def test_cleaning_the_mesh_starts_a_new_run():

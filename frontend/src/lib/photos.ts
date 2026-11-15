@@ -13,7 +13,7 @@ let client: S3Client | null = null;
 const s3 = () => (client ??= new S3Client({ region: process.env.AWS_REGION ?? "us-east-2" }));
 
 /** Something on the mesh, in the photo's pixels. strength is the score over its threshold. */
-export type Spot = { x: number; y: number; bbox: [number, number, number, number]; area_px: number; strength: number; darker: boolean };
+export type Spot = { x: number; y: number; bbox: [number, number, number, number]; area_px: number; strength: number };
 export type Check = {
   label: "clean" | "microplastic" | "blocked";
   reason: string | null; // why it's blocked
@@ -84,6 +84,14 @@ export async function listPhotos(limit: number) {
   const byKey = await labels;
   const photos: Photo[] = all.slice(0, limit).map((p) => ({ ...p, check: byKey.get(p.key) ?? null }));
   return { total: all.length, photos, estimates: await estimates };
+}
+
+/** One camera's newest `limit` photos with their labels, newest first. */
+export async function nodePhotos(node: string, limit: number): Promise<Photo[]> {
+  const labels = checks();
+  const mine = (await allPhotos()).filter((p) => p.node === node).slice(0, limit);
+  const byKey = await labels;
+  return mine.map((p) => ({ ...p, check: byKey.get(p.key) ?? null }));
 }
 
 /** Each camera's newest photo and its label, by node. */

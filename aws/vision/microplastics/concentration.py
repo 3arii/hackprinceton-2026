@@ -5,8 +5,10 @@ spots on it pile up as water goes through. Over a run of photos
 
     particles/L = (spots at the end - spots at the start) / (view_fraction x flow_lpm x minutes)
 
-  spots          what mesh.check() found, as a running median of 3 photos, so a particle counts once
-                 it shows in two of the last three and one odd photo (a bubble, a glint) changes nothing
+  spots          what mesh.check() found that was also in the photo before, at the same place on the
+                 mesh (after each photo's camera shift): a caught particle stays put, a bubble or a
+                 glint doesn't. Then a running median over 3 photos, so one missed detection or one
+                 odd photo changes nothing.
   run            the newest stretch in which the count never drops and photos are at most MAX_GAP
                  minutes apart: a drop means the mesh was cleaned or something washed off, a gap that
                  the pump or the Pi was off. Blocked photos are skipped.
@@ -20,20 +22,35 @@ run that caught nothing still bounds the concentration from above, more tightly 
 filtered.
 """
 
+import math
 from datetime import datetime
 
 from microplastics.detect import poisson95
 
 MAX_GAP = 10  # minutes between usable photos before a run breaks
+MATCH = 40  # px at full resolution: one particle seen in two photos, once their camera shifts are undone
 USABLE = {"clean", "microplastic"}
 
 
+def _stayed(photos):
+    """Per photo, how many of its spots were also in the photo before at the same place on the mesh."""
+    out, before = [], []
+    for p in photos:
+        sx, sy = p.get("shift") or (0, 0)
+        here = [(s["x"] - sx, s["y"] - sy) for s in p.get("spots") or []]
+        out.append(sum(any(math.hypot(x - a, y - b) <= MATCH for a, b in before) for x, y in here))
+        before = here
+    return out
+
+
 def estimate(photos, flow_lpm, view_fraction=1.0):
-    """photos: (iso time, label, number of spots), in any order. None until a run spans two photos."""
-    seen = sorted((datetime.fromisoformat(t), n) for t, label, n in photos if label in USABLE)
-    times, count = [t for t, _ in seen], []
+    """photos: labels from mesh.check() with their time ({time, label, spots, shift}), in any order.
+    None until a run spans two photos."""
+    seen = sorted((p for p in photos if p["label"] in USABLE), key=lambda p: datetime.fromisoformat(p["time"]))
+    times = [datetime.fromisoformat(p["time"]) for p in seen]
+    stayed, count = _stayed(seen), []
     for i in range(len(seen)):
-        w = sorted(n for _, n in seen[max(0, i - 2) : i + 1])
+        w = sorted(stayed[max(0, i - 2) : i + 1])
         count.append(w[(len(w) - 1) // 2])
 
     end = start = len(seen) - 1

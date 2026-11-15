@@ -2242,3 +2242,222 @@ body {
 .fetch-stamp[data-error] {
   color: #ffb340;
 }
+
+/* Live buoy stream (/live): the raw samples as the Pi gateway uploads them */
+.live {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  padding: max(28px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 48px max(16px, env(safe-area-inset-left));
+}
+
+.live-head,
+.live-status,
+.live-note,
+.live-table {
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.live-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.live-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.live-head p {
+  max-width: 68ch;
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.live-note {
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.live-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  margin-top: 0;
+  margin-bottom: 20px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--hairline);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.live-stat {
+  padding: 12px 14px;
+  background: var(--material);
+}
+
+.live-stat dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.live-stat dd {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.live-stat dd span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+.live-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+}
+
+.live-dot[data-tone="good"] { background: #30d158; }
+.live-dot[data-tone="warn"] { background: #ffd60a; }
+.live-dot[data-tone="bad"] { background: var(--signal); }
+
+.live-table {
+  overflow-x: auto;
+  border-radius: 10px;
+  background: var(--material);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.live-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.live-table th {
+  position: sticky;
+  top: 0;
+  padding: 10px 14px;
+  background: var(--material-hover);
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: right;
+}
+
+.live-table td {
+  padding: 7px 14px;
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-2);
+  text-align: right;
+}
+
+.live-table :is(th, td):first-child {
+  text-align: left;
+}
+
+.live-table td[data-bad] {
+  color: #ff6961;
+}
+
+.live-table .live-divider td {
+  padding: 6px 14px;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: left;
+  background: rgb(255 255 255 / 0.03);
+}
+
+.live-table .live-divider[data-tone="warn"] td {
+  color: #ffd60a;
+}
+
+.live-camera {
+  max-width: 1200px;
+  margin: 0 auto 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 480px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.live-camera img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--material);
+}
+
+.live-camera p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.live-thumbs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.live-thumbs span {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .live-camera {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A sample that just landed glows briefly, then settles into the stream */
+.live-table tr[data-new] td {
+  animation: live-arrive 2.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes live-arrive {
+  from {
+    background: rgb(10 132 255 / 0.18);
+    color: var(--ink);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-table tr[data-new] td {
+    animation: none;
+  }
+}

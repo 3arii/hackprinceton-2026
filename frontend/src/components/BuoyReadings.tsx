@@ -2,8 +2,8 @@
 
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { METRICS, REAL_METRICS, seriesFor, type Metric, type MetricKey, type Overrides } from "@/lib/buoyData";
+import { CARNEGIE, buoySeries, decimalsFor, type BuoyMetric } from "@/lib/carnegie";
 import type { BuoyData } from "@/lib/readings";
-import { when } from "@/lib/useFleet";
 
 const TICK_MS = 5000;
 const SPARK = { width: 200, height: 34, pad: 4 };
@@ -32,28 +32,7 @@ function Empty({ label, note }: { label: string; note: string }) {
   );
 }
 
-const VERDICT = { clean: "Clean", microplastic: "Microplastic", blocked: "Blocked" } as const;
-
-/** What the camera's model made of its newest photo, beside the photo. No count: the flow isn't measured. */
-function Camera({ photo }: { photo: BuoyData["photo"] }) {
-  if (!photo) return <Empty label="Microplastics" note="No photo yet" />;
-  const label = photo.check?.label;
-  return (
-    <div className="reading reading-camera">
-      <div className="reading-camera-text">
-        <div className="reading-label">Microplastics</div>
-        <div className="reading-value reading-verdict" data-label={label ?? "none"}>
-          {label ? VERDICT[label] : "Not checked"}
-        </div>
-        <div className="reading-note">Photo from {when(photo.time)}</div>
-      </div>
-      <a className="reading-photo" href="/images" target="_blank" rel="noreferrer" aria-label="Open the camera photos">
-        {/* eslint-disable-next-line @next/next/no-img-element -- private S3 photo through our own route */}
-        <img src={`/api/images/file?key=${encodeURIComponent(photo.key)}`} alt={`Newest mesh photo, ${label ?? "not checked"}`} />
-      </a>
-    </div>
-  );
-}
+const MICROPLASTICS = METRICS.find((m) => m.key === "microplastics")!;
 
 export function Reading({ metric, points, edit, span: period = "the last 24 hours" }: { metric: Metric; points: Point[]; edit?: Edit; span?: string }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -127,19 +106,22 @@ type Props = {
   onReset?(): void;
 };
 
-/** What the hardware reported: three sensors and the camera's verdict. */
-function LiveReadings({ data, loading }: { data?: BuoyData; loading?: boolean }) {
+/** What the buoy measured: recorded in Lake Carnegie where there's a recording (lib/carnegie.ts), else
+ * live from its hardware. */
+function LiveReadings({ buoy, data, loading }: { buoy: number; data?: BuoyData; loading?: boolean }) {
   const none = loading ? "Loading" : "No reading yet";
-  const tile = (key: "temperature" | "salinity" | "turbidity") => {
-    const m = REAL_METRICS[key];
-    const points = data?.series[key] ?? [];
-    return points.length ? <Reading key={key} metric={m} points={points} span="its last run" /> : <Empty key={key} label={m.label} note={none} />;
+  const series = buoySeries(buoy, data?.series);
+  const tile = (key: BuoyMetric) => {
+    const points = series[key];
+    const m = key === "microplastics" ? { ...MICROPLASTICS, decimals: decimalsFor(points.map((p) => p.value)) } : REAL_METRICS[key];
+    const span = CARNEGIE[buoy]?.[key] !== undefined ? "its measurement in Lake Carnegie" : "its last run";
+    return points.length ? <Reading key={key} metric={m} points={points} span={span} /> : <Empty key={key} label={m.label} note={none} />;
   };
   return (
     <div className="readings">
       <div className="readings-grid">
         {tile("temperature")}
-        {data ? <Camera photo={data.photo} /> : <Empty label="Microplastics" note={none} />}
+        {tile("microplastics")}
         {tile("salinity")}
         {tile("turbidity")}
       </div>
@@ -149,7 +131,7 @@ function LiveReadings({ data, loading }: { data?: BuoyData; loading?: boolean })
 
 export default function BuoyReadings(props: Props) {
   // Debug edits and sends a simulated reading; otherwise the window shows the hardware
-  return props.debug ? <DebugReadings {...props} /> : <LiveReadings data={props.data} loading={props.loading} />;
+  return props.debug ? <DebugReadings {...props} /> : <LiveReadings buoy={props.buoy + 1} data={props.data} loading={props.loading} />;
 }
 
 function DebugReadings({ buoy, overrides, debug, onSend, onReset }: Props) {

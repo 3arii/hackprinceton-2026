@@ -11,17 +11,20 @@ import BuoyReadings from "@/components/BuoyReadings";
 import NetworkReadings from "@/components/NetworkReadings";
 import NetworkPanel from "@/components/NetworkPanel";
 import type { MetricKey, Overrides } from "@/lib/buoyData";
-import type { BuoyData } from "@/lib/readings";
+import { CARNEGIE, buoySeries } from "@/lib/carnegie";
 import { useFleet, when } from "@/lib/useFleet";
 
 // The buoy cluster on Lake Carnegie, by Lake Drive
 const HOME = { center: [-74.64015, 40.34295] as [number, number], zoom: 17.5, pitch: 60, bearing: -18 };
 
-// The two hardware buoys mid-lake, each at least 20m from shore, linked to each other.
+// Four buoys mid-lake, each at least 20m from shore. Every pair is linked. Buoys 1 and 2 carry the
+// hardware; 2, 3 and 4 also have readings recorded by hand (lib/carnegie.ts).
 // Dragging one on the map moves it here, and the browser remembers where it was left.
 const BUOYS: [number, number][] = [
   [-74.6413, 40.3433],
   [-74.6398, 40.34338],
+  [-74.6389, 40.34295],
+  [-74.6409, 40.34262],
 ];
 const PLACES_KEY = "buoy-places";
 const DRAG_PX = 5; // a press that moves less than this is a click
@@ -133,7 +136,7 @@ export default function MapView() {
   const nextKey = useRef(1);
   const fleet = useFleet();
   const loading = !fleet.fetchedAt && !fleet.error;
-  const reporting = fleet.buoys.filter((b): b is BuoyData => !!b);
+  const network = BUOYS.map((_, i) => buoySeries(i + 1, fleet.buoys[i]?.series)); // every buoy, for the averages
   const [, setPlaced] = useState(0); // bumped when a buoy is dragged, so open windows show where it went
 
   // Debug injects readings and starts paid agent runs, so it sits behind a passcode
@@ -416,7 +419,7 @@ export default function MapView() {
               onClose={() => closeWindow(w.key)}
               onHover={setHoverNetwork}
             >
-              <NetworkReadings buoys={reporting} loading={loading} />
+              <NetworkReadings buoys={network} loading={loading} />
             </BuoyWindow>
           ) : (
             <BuoyWindow
@@ -425,7 +428,11 @@ export default function MapView() {
               title={`Buoy ${w.buoy + 1}`}
               subtitle={
                 `Lake Carnegie · ${formatCoord(BUOYS[w.buoy])}` +
-                (fleet.buoys[w.buoy]?.lastReading ? ` · Last reading from ${when(fleet.buoys[w.buoy]!.lastReading!)}` : "")
+                (CARNEGIE[w.buoy + 1]?.byHand
+                  ? ` · Recorded by hand at ${when(CARNEGIE[w.buoy + 1]!.until)}`
+                  : fleet.buoys[w.buoy]?.lastReading
+                    ? ` · Last reading from ${when(fleet.buoys[w.buoy]!.lastReading!)}`
+                    : "")
               }
               size={debug ? DEBUG_SIZE : WINDOW_SIZE}
               badge={debug ? "Debug" : undefined}

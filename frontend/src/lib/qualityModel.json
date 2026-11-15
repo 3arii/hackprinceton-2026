@@ -1,0 +1,35 @@
+{
+  "model": "linear regression",
+  "target": "Water Quality Index from the NSF sub-index curves for dissolved oxygen (% saturation), turbidity and total dissolved solids, NSF weights",
+  "features": [
+    "water_temp_c",
+    "log1p_turbidity_ntu"
+  ],
+  "intercept": 87.581,
+  "coefficients": [
+    -0.7483,
+    -0.1717
+  ],
+  "median_turbidity_ntu": 4.45,
+  "trained_on": {
+    "site": "USGS 01402000, Millstone River at Blackwells Mills, NJ (daily means)",
+    "days": 544,
+    "from": "2023-11-16",
+    "to": "2026-11-14",
+    "index_range": [
+      52.7,
+      87.5
+    ]
+  },
+  "cross_validation": {
+    "folds": 5,
+    "r2": 0.425,
+    "mae": 4.3
+  },
+  "newest_year": {
+    "train_days": 347,
+    "test_days": 197,
+    "r2": -0.005,
+    "mae": 5.66
+  }
+}

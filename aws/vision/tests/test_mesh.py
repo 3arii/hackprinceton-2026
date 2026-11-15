@@ -54,7 +54,7 @@ def test_a_particle_on_the_mesh_is_found(setup):
         cv2.circle(dark, (x, y), size // 2, 0.9, -1)
         r = mesh.check(model, _photo(glow, holes, rng, rng.uniform(-3, 3, 2), dark))
         assert r["label"] == "microplastic", r
-        assert any(abs(s["x"] - x) < 30 and abs(s["y"] - y) < 30 and s["darker"] for s in r["spots"]), r
+        assert any(abs(s["x"] - x) < 30 and abs(s["y"] - y) < 30 for s in r["spots"]), r
 
 
 def test_a_moved_or_covered_camera_is_blocked(setup):

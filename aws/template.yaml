@@ -204,6 +204,10 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Table }
         - S3ReadPolicy: { BucketName: !Ref Bucket }
+        - Statement:  # the model it learns when the camera's view changes
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "${Bucket.Arn}/models/*"
       Events:
         Uploaded:
           Type: EventBridgeRule
