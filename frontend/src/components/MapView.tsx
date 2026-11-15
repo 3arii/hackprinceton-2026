@@ -11,17 +11,20 @@ import BuoyReadings from "@/components/BuoyReadings";
 import NetworkReadings from "@/components/NetworkReadings";
 import NetworkPanel from "@/components/NetworkPanel";
 import type { MetricKey, Overrides } from "@/lib/buoyData";
+import type { BuoyData } from "@/lib/readings";
+import { useFleet, when } from "@/lib/useFleet";
 
 // The buoy cluster on Lake Carnegie, by Lake Drive
 const HOME = { center: [-74.64015, 40.34295] as [number, number], zoom: 17.5, pitch: 60, bearing: -18 };
 
-// Four buoys mid-lake, each at least 20m from shore. Every pair is linked.
+// The two hardware buoys mid-lake, each at least 20m from shore, linked to each other.
+// Dragging one on the map moves it here, and the browser remembers where it was left.
 const BUOYS: [number, number][] = [
   [-74.6413, 40.3433],
   [-74.6398, 40.34338],
-  [-74.6389, 40.34295],
-  [-74.6409, 40.34262],
 ];
+const PLACES_KEY = "buoy-places";
+const DRAG_PX = 5; // a press that moves less than this is a click
 
 const MAX_WINDOWS = 2; // buoy windows; the network window is extra
 const NETWORK = -1; // the `buoy` of the mesh network's window
@@ -31,7 +34,6 @@ const DEBUG_SIZE = { width: WINDOW_SIZE.width, height: WINDOW_SIZE.height + 52 }
 // The agent panel, bottom right
 const AGENT_WIDTH = 452;
 const agentRect = () => ({ x: window.innerWidth - AGENT_WIDTH - 24, y: 280, w: AGENT_WIDTH + 24, h: window.innerHeight - 280 });
-const ALL_BUOYS = BUOYS.map((_, i) => i);
 const sizeOf = (w: WindowState) => (w.buoy === NETWORK ? NETWORK_SIZE : WINDOW_SIZE);
 const isNarrow = () => window.innerWidth < 900;
 let agentPanelOpen = false; // read by window placement
@@ -129,6 +131,10 @@ export default function MapView() {
   const [debug, setDebug] = useState(false);
   const [overrides, setOverrides] = useState<Overrides>({});
   const nextKey = useRef(1);
+  const fleet = useFleet();
+  const loading = !fleet.fetchedAt && !fleet.error;
+  const reporting = fleet.buoys.filter((b): b is BuoyData => !!b);
+  const [, setPlaced] = useState(0); // bumped when a buoy is dragged, so open windows show where it went
 
   // Debug injects readings and starts paid agent runs, so it sits behind a passcode
   const [passcode, setPasscode] = useState<string | null>(null);
@@ -303,19 +309,69 @@ export default function MapView() {
     mapRef.current = map;
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-left");
 
+    // Where the buoys were last dragged to, on this browser
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(PLACES_KEY) ?? "null");
+      if (Array.isArray(saved))
+        saved.slice(0, BUOYS.length).forEach((p, i) => {
+          if (Array.isArray(p) && p.length === 2 && p.every((v) => typeof v === "number" && Number.isFinite(v))) BUOYS[i] = [p[0], p[1]];
+        });
+    } catch {
+      // nothing saved, or private mode
+    }
+
     map.on("load", () => {
       const layer = createBuoyLayer("buoys", BUOYS);
       layerRef.current = layer;
       map.addLayer(layer);
     });
 
+    // Press a buoy and drag to move it. The grab keeps its offset, so the buoy doesn't jump to the cursor.
+    let drag: { i: number; from: { x: number; y: number }; dx: number; dy: number; moved: boolean } | null = null;
+    let justDragged = false;
+    map.on("mousedown", (e) => {
+      const i = hitBuoy(map, e.point);
+      if (i < 0) return;
+      const p = map.project(BUOYS[i]);
+      drag = { i, from: e.point, dx: p.x - e.point.x, dy: p.y - e.point.y, moved: false };
+      map.dragPan.disable();
+    });
     map.on("mousemove", (e) => {
+      if (drag) {
+        if (!drag.moved && Math.hypot(e.point.x - drag.from.x, e.point.y - drag.from.y) < DRAG_PX) return;
+        drag.moved = true;
+        const to = map.unproject([e.point.x + drag.dx, e.point.y + drag.dy]);
+        BUOYS[drag.i] = [to.lng, to.lat];
+        layerRef.current?.movePoint(drag.i, BUOYS[drag.i]);
+        map.getCanvas().style.cursor = "grabbing";
+        return;
+      }
       const i = hitBuoy(map, e.point);
       map.getCanvas().style.cursor = i >= 0 ? "pointer" : "";
       setHoverMap(i);
     });
-    map.on("mouseout", () => setHoverMap(-1));
+    const drop = () => {
+      if (!drag) return;
+      map.dragPan.enable();
+      if (drag.moved) {
+        justDragged = true;
+        setTimeout(() => (justDragged = false), 0);
+        setPlaced((n) => n + 1);
+        try {
+          localStorage.setItem(PLACES_KEY, JSON.stringify(BUOYS));
+        } catch {
+          // private mode: the move lasts until reload
+        }
+      }
+      drag = null;
+    };
+    map.on("mouseup", drop);
+    map.on("mouseout", () => {
+      drop();
+      setHoverMap(-1);
+    });
     map.on("click", (e) => {
+      if (justDragged) return;
       const i = hitBuoy(map, e.point);
       if (i >= 0) openRef.current(i, e.point);
     });
@@ -360,14 +416,17 @@ export default function MapView() {
               onClose={() => closeWindow(w.key)}
               onHover={setHoverNetwork}
             >
-              <NetworkReadings buoys={ALL_BUOYS} overrides={overrides} />
+              <NetworkReadings buoys={reporting} loading={loading} />
             </BuoyWindow>
           ) : (
             <BuoyWindow
               key={w.key}
               win={w}
               title={`Buoy ${w.buoy + 1}`}
-              subtitle={`Lake Carnegie · ${formatCoord(BUOYS[w.buoy])}`}
+              subtitle={
+                `Lake Carnegie · ${formatCoord(BUOYS[w.buoy])}` +
+                (fleet.buoys[w.buoy]?.lastReading ? ` · Last reading from ${when(fleet.buoys[w.buoy]!.lastReading!)}` : "")
+              }
               size={debug ? DEBUG_SIZE : WINDOW_SIZE}
               badge={debug ? "Debug" : undefined}
               active={z === windows.length - 1}
@@ -380,6 +439,8 @@ export default function MapView() {
             >
               <BuoyReadings
                 buoy={w.buoy}
+                data={fleet.buoys[w.buoy]}
+                loading={loading}
                 overrides={overrides}
                 debug={debug}
                 onSend={(values) => sendReading(w.buoy, values)}
@@ -396,6 +457,14 @@ export default function MapView() {
         onSelect={toggleNetwork}
         onHover={setHoverNetwork}
       />
+
+      <p className="fetch-stamp" role="status" data-error={fleet.error ? true : undefined}>
+        {fleet.fetchedAt
+          ? `Last fetch at ${new Date(fleet.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`
+          : fleet.error
+            ? "Can\u2019t reach the buoy data"
+            : "Fetching buoy data\u2026"}
+      </p>
 
       <AgentPanel onExpand={onAgentExpand} />
 
