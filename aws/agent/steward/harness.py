@@ -31,10 +31,17 @@ class Case(TypedDict):
     reason: str
     reading_time: str  # ISO time of the anomalous reading
     run: NotRequired[str | None]  # demo or debug run tag, so readings from other runs are ignored
+    # Set when the manager asked for this check by iMessage. A run keeps only its schema's keys and
+    # hands them back when it wakes its parent, so these must be declared here to reach the reply.
+    phone: NotRequired[str]
+    space_id: NotRequired[str]
+    agent_id: NotRequired[str]
+    message_id: NotRequired[str]
 
 
-class Chat(TypedDict):
-    """Runtime context for one incoming iMessage: where to send the reply."""
+class Chat(Case):
+    """Runtime context for one incoming iMessage: where to send the reply, plus a case (the text, at
+    the time it arrived) for the live checks the liaison launches."""
 
     phone: str
     space_id: str

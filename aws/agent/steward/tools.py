@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 from datetime import date, datetime, timedelta, timezone
 
@@ -398,15 +399,18 @@ async def lake_now(runtime: ToolRuntime) -> str:
 
 @tool(parse_docstring=True)
 async def reply(runtime: ToolRuntime, text: str) -> str:
-    """Send your answer to the person who texted, as an iMessage in their conversation. Call exactly once per incoming text.
+    """Send a text to the person who texted, as an iMessage in their conversation. Call once per turn: the answer,
+    or a one-line heads-up when you launch a live check.
 
     Args:
         text: Plain text, short enough for a phone screen (under 100 words). No markdown.
     """
     ctx = runtime.context if isinstance(runtime.context, dict) else vars(runtime.context)
+    parent = ctx.get("message_id") or ""
+    # Without the conversation (it shouldn't happen) the text still reaches the registered manager
     await photon.send_text(
-        text, space_id=ctx["space_id"], sender_id=ctx["agent_id"], reply_to=ctx.get("message_id"),
-        key=f"reply:{ctx.get('message_id')}",
+        text, space_id=ctx.get("space_id"), sender_id=ctx.get("agent_id"), reply_to=parent if parent.startswith("pho_msg_") else None,
+        key=f"reply:{ctx.get('message_id')}:{hashlib.sha1(text.encode()).hexdigest()[:12]}",
     )
     return "Sent."
 
