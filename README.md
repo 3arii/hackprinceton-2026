@@ -18,6 +18,10 @@ Solar powered buoys that track water quality 200x cheaper than the next closest 
 ![3D printed](https://img.shields.io/badge/3D%20printed-F26016)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow)
 
+[![Watch the demo video](https://img.youtube.com/vi/Q-0arEQO5fQ/maxresdefault.jpg)](https://youtu.be/Q-0arEQO5fQ)
+
+**[Watch the 2 minute demo on YouTube](https://youtu.be/Q-0arEQO5fQ)**
+
 ![Lincoln on the water](docs/images/render_on_water.jpg)
 
 [Demo video](https://youtu.be/Q-0arEQO5fQ) | [Devpost](https://devpost.com/software/bouy-7tofbl) | Built at HackPrinceton Fall '26
