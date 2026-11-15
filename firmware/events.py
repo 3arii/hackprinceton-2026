@@ -8,14 +8,13 @@ is not learned as normal; `clear` readings back inside half the threshold close 
 
 Signals (fields from FLOTSAM_READING lines):
   temperature  temp_c                  on by default; threshold max(0.8 C, 6 x noise)
-  turbidity    light_mv - ambient_mv   off until the turbidity LED is wired; max(80 mV, 6 x noise)
-  conductivity cond_mv                 off until the electrodes are wired; max(60 mV, 6 x noise)
+  turbidity    light_mv - ambient_mv   off by default; max(80 mV, 6 x noise)
+  conductivity cond_mv                 off by default; max(60 mV, 6 x noise)
 
 Events are appended to <output>/events.jsonl, one JSON object per line:
   {"node", "kind", "state": "start" | "update" | "end", "value", "baseline", "delta", "threshold", "unit",
    "peak", "since", "seq", "received_at", "level"}
 "start" opens an event, "update" follows a new peak while it is open, "end" closes it.
-replay.py runs this same detector over a recorded clip.
 """
 
 import json

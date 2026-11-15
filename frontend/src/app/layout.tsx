@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HackPrinceton",
-  description: "A live 3D map of Princeton.",
+  title: "Lincoln",
+  description: "Live water quality from Lincoln buoys.",
 };
 
 export const viewport: Viewport = {

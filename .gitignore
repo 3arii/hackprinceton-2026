@@ -10,3 +10,7 @@ firmware/gateway/sdkconfig*
 !firmware/gateway/sdkconfig.defaults
 firmware/gateway/dependencies.lock
 firmware/gateway-credentials.local.json
+
+.env
+.env.local
+*.local.json

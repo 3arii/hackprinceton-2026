@@ -1,5 +1,5 @@
 [Unit]
-Description=Flotsam: shore gateway collector (C3 Super Mini over USB) and local viewer
+Description=Lincoln: shore gateway collector (C3 Super Mini over USB) and local viewer
 After=network.target
 
 [Service]

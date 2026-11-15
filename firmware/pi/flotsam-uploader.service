@@ -1,5 +1,5 @@
 [Unit]
-Description=Flotsam: upload camera images from the shore Pi to S3
+Description=Lincoln: upload camera images from the shore Pi to S3
 After=network-online.target
 Wants=network-online.target
 
